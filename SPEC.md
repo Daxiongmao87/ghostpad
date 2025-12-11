@@ -95,6 +95,13 @@ _Conventions: Follow standard platform practices; research any unknown conventio
 - **GPU Detection & Sandboxed Backends:** Flatpak builds rely on the standard `org.freedesktop.Platform.GL*` extensions; we detect whichever GPU llama.cpp can see inside the sandbox and fall back to CPU if no devices are exposed. If GPU access fails (driver missing or `/dev/dri` blocked), show a single warning telling users to check their Flatpak driver extensions or permissions rather than layering extra helpers. citeturn4search0turn0search1turn1search0
 - **Host/Roaming Builds:** For AppImage and bare-metal installs, rely on llama.cpp’s device enumeration (including respect for `CUDA_VISIBLE_DEVICES` / `HIP_VISIBLE_DEVICES`) and display any permission failures inline; no extra CLI tooling.
 - **llama.cpp Enumeration:** Bundle llama.cpp binaries that expose `llama-cli --list-devices`; run that command at startup to populate the GPU dropdown, honoring standard env overrides and falling back to CPU if nothing is available. citeturn3search1turn2search1
+- **Source Layout:** Keep the Rust codebase modular to avoid another monolithic `app.rs`. Required structure:
+  - `src/main.rs` – bootstrap only (create `Application`, call into `app::run()`).
+  - `src/app/` – orchestrates windows and signals via focused files (`window.rs`, `menu.rs`, `recent.rs`, `find_replace.rs`, `autosave.rs`, `recovery.rs`, etc.). Each feature goes into its own module rather than bloating a single file.
+  - `src/document/` – buffer/file helpers (`buffer.rs`, `file_ops.rs`, `autosave.rs`, `recovery.rs`) plus unit tests for persistence logic.
+  - `src/widgets/` – reusable GTK/adw components (toolbar, status bar, preferences pages). Autosave preferences live in `src/widgets/preferences/autosave.rs`, LLM settings in `src/widgets/preferences/llm.rs`, etc.
+  - Shared utilities (`paths.rs`, `settings.rs`, `state_store.rs`) remain standalone modules.
+  - New functionality must conform to this layout; pull requests that expand the orchestration file instead of adding/using modules are rejected until they follow the structure.
 
 ## 9. Data Management & Autosave
 _Conventions: Follow standard platform practices; research any unknown conventions via web search before implementation._

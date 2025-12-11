@@ -1,4 +1,5 @@
 mod app;
+mod llm;
 mod document;
 mod paths;
 mod settings;
