@@ -27,7 +27,10 @@ use super::preferences::{self, PreferencesUi};
 pub fn build_ui(application: &adw::Application) -> Result<()> {
     let paths = AppPaths::initialize()?;
     let settings = Settings::load(&paths)?;
-    let llm_manager = RefCell::new(LlmManager::new(settings.llm.clone()));
+    let llm_manager = RefCell::new(LlmManager::new(
+        settings.llm.clone(),
+        paths.models_dir.clone(),
+    ));
 
     let document = Document::new();
     let buffer = document.buffer();

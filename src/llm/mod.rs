@@ -1,4 +1,12 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+pub mod huggingface;
+pub mod llamacpp;
+
+pub use huggingface::{HuggingFaceModel, ModelDownloader};
+pub use llamacpp::{InferenceConfig, LlamaCpp};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ProviderKind {
@@ -64,11 +72,28 @@ pub struct GpuDevice {
 
 pub struct LlmManager {
     config: LlmSettings,
+    models_dir: PathBuf,
+    downloader: ModelDownloader,
+    llamacpp: Option<Arc<LlamaCpp>>,
+    current_model: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl LlmManager {
-    pub fn new(config: LlmSettings) -> Self {
-        Self { config }
+    pub fn new(config: LlmSettings, models_dir: PathBuf) -> Self {
+        let downloader = ModelDownloader::new(models_dir.clone());
+        let llamacpp = LlamaCpp::new().ok().map(Arc::new);
+
+        if llamacpp.is_none() {
+            log::warn!("llama-cli not found - local inference will be unavailable");
+        }
+
+        Self {
+            config,
+            models_dir,
+            downloader,
+            llamacpp,
+            current_model: Arc::new(Mutex::new(None)),
+        }
     }
 
     pub fn config(&self) -> &LlmSettings {
@@ -77,6 +102,77 @@ impl LlmManager {
 
     pub fn update_config(&mut self, config: LlmSettings) {
         self.config = config;
+    }
+
+    /// Download a model from Hugging Face
+    pub fn download_model(&self, model_ref: &str) -> anyhow::Result<PathBuf> {
+        let model = HuggingFaceModel::parse(model_ref)?;
+        self.downloader.download(&model)
+    }
+
+    /// Check if a model is downloaded
+    pub fn is_model_downloaded(&self, model_ref: &str) -> bool {
+        if let Ok(model) = HuggingFaceModel::parse(model_ref) {
+            self.downloader.is_downloaded(&model)
+        } else {
+            false
+        }
+    }
+
+    /// Get path to a downloaded model
+    pub fn get_model_path(&self, model_ref: &str) -> Option<PathBuf> {
+        if let Ok(model) = HuggingFaceModel::parse(model_ref) {
+            self.downloader.get_path(&model)
+        } else {
+            None
+        }
+    }
+
+    /// Run inference with the configured model
+    pub fn complete(&self, prompt: &str, max_tokens: usize) -> anyhow::Result<String> {
+        let llamacpp = self
+            .llamacpp
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("llama-cli not available"))?;
+
+        // Determine which model to use
+        let model_path = if self.config.override_model_path
+            && !self.config.local_model_path.is_empty()
+        {
+            // Use override path
+            PathBuf::from(&self.config.local_model_path)
+        } else {
+            // Use default model based on GPU/CPU selection
+            let model_ref = if self.config.force_cpu_only {
+                &self.config.default_cpu_model
+            } else {
+                &self.config.default_gpu_model
+            };
+
+            // Ensure model is downloaded
+            if !self.is_model_downloaded(model_ref) {
+                log::info!("Model not downloaded, downloading: {}", model_ref);
+                self.download_model(model_ref)?
+            } else {
+                self.get_model_path(model_ref)
+                    .ok_or_else(|| anyhow::anyhow!("Model path not found"))?
+            }
+        };
+
+        // Determine device
+        let device = if self.config.force_cpu_only {
+            None
+        } else {
+            self.config.preferred_device.as_deref()
+        };
+
+        // Run inference
+        llamacpp.complete(&model_path, prompt, max_tokens, device)
+    }
+
+    /// Check if local inference is available
+    pub fn is_local_available(&self) -> bool {
+        self.llamacpp.is_some()
     }
 
     pub fn detect_gpus() -> Vec<GpuDevice> {
