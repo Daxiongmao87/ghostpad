@@ -550,9 +550,11 @@ impl AppState {
         self.update_cursor_label();
         self.hook_buffer_signals();
         self.restart_autosave();
+        self.apply_editor_settings();
         self.sync_preferences_ui();
         self.sync_llm_preferences();
         self.hook_llm_preferences();
+        self.hook_editor_preferences();
     }
 
     fn hook_buffer_signals(self: &Rc<Self>) {
@@ -1126,6 +1128,61 @@ impl AppState {
         if let Err(err) = self.settings.borrow().save(&self.paths) {
             log::warn!("Failed to save settings: {err:?}");
         }
+    }
+
+    fn apply_editor_settings(&self) {
+        let view = self.document.view();
+        let settings = self.settings.borrow();
+
+        view.set_show_line_marks(settings.show_whitespace);
+
+        if settings.wrap_text {
+            view.set_wrap_mode(gtk::WrapMode::WordChar);
+        } else {
+            view.set_wrap_mode(gtk::WrapMode::None);
+        }
+    }
+
+    fn hook_editor_preferences(self: &Rc<Self>) {
+        let state = Rc::clone(self);
+        self.preferences
+            .whitespace_switch
+            .connect_state_set(move |_, active| {
+                state.set_show_whitespace(active);
+                Propagation::Proceed
+            });
+
+        let state = Rc::clone(self);
+        self.preferences
+            .wrap_switch
+            .connect_state_set(move |_, active| {
+                state.set_wrap_text(active);
+                Propagation::Proceed
+            });
+    }
+
+    fn set_show_whitespace(&self, show: bool) {
+        {
+            let mut settings = self.settings.borrow_mut();
+            if settings.show_whitespace == show {
+                return;
+            }
+            settings.show_whitespace = show;
+        }
+        self.save_settings();
+        self.apply_editor_settings();
+    }
+
+    fn set_wrap_text(&self, wrap: bool) {
+        {
+            let mut settings = self.settings.borrow_mut();
+            if settings.wrap_text == wrap {
+                return;
+            }
+            settings.wrap_text = wrap;
+        }
+        self.save_settings();
+        self.apply_editor_settings();
     }
 
     fn attach_file_filters(dialog: &gtk::FileChooserDialog) {

@@ -15,6 +15,14 @@ pub struct Settings {
     pub autosave_idle_only: bool,
     #[serde(default)]
     pub llm: LlmSettings,
+    #[serde(default)]
+    pub show_whitespace: bool,
+    #[serde(default = "default_wrap_text")]
+    pub wrap_text: bool,
+}
+
+fn default_wrap_text() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -24,6 +32,8 @@ impl Default for Settings {
             recent_files: Vec::new(),
             autosave_idle_only: false,
             llm: LlmSettings::default(),
+            show_whitespace: false,
+            wrap_text: true,
         }
     }
 }

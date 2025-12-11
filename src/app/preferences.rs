@@ -18,6 +18,8 @@ pub(super) struct PreferencesUi {
     pub gpu_combo: adw::ComboRow,
     pub gpu_model_entry: gtk::Entry,
     pub cpu_model_entry: gtk::Entry,
+    pub whitespace_switch: gtk::Switch,
+    pub wrap_switch: gtk::Switch,
 }
 
 pub(super) fn build_preferences(
@@ -58,7 +60,7 @@ pub(super) fn build_preferences(
     let autosave_page = adw::PreferencesPage::builder().title("Autosave").build();
     autosave_page.add(&autosave_group);
 
-    let editor_page = build_editor_page(settings);
+    let (editor_page, whitespace_switch, wrap_switch) = build_editor_page(settings);
     let (
         llm_page,
         llm_provider_combo,
@@ -97,14 +99,16 @@ pub(super) fn build_preferences(
         gpu_combo,
         gpu_model_entry,
         cpu_model_entry,
+        whitespace_switch,
+        wrap_switch,
     }
 }
 
-fn build_editor_page(_settings: &Settings) -> adw::PreferencesPage {
+fn build_editor_page(settings: &Settings) -> (adw::PreferencesPage, gtk::Switch, gtk::Switch) {
     let page = adw::PreferencesPage::builder().title("Editor").build();
     let group = adw::PreferencesGroup::builder()
         .title("Editor basics")
-        .description("Placeholder controls – wire actual settings later.")
+        .description("Configure text display and behavior.")
         .build();
 
     let font_row = adw::ActionRow::builder()
@@ -118,7 +122,10 @@ fn build_editor_page(_settings: &Settings) -> adw::PreferencesPage {
         .title("Show whitespace")
         .subtitle("Display tabs/spaces as faint markers")
         .build();
-    let whitespace_switch = gtk::Switch::builder().valign(gtk::Align::Center).build();
+    let whitespace_switch = gtk::Switch::builder()
+        .valign(gtk::Align::Center)
+        .active(settings.show_whitespace)
+        .build();
     whitespace_row.add_suffix(&whitespace_switch);
     whitespace_row.set_activatable_widget(Some(&whitespace_switch));
     group.add(&whitespace_row);
@@ -127,13 +134,16 @@ fn build_editor_page(_settings: &Settings) -> adw::PreferencesPage {
         .title("Soft wrap lines")
         .subtitle("Wrap long lines to the view width")
         .build();
-    let wrap_switch = gtk::Switch::builder().valign(gtk::Align::Center).build();
+    let wrap_switch = gtk::Switch::builder()
+        .valign(gtk::Align::Center)
+        .active(settings.wrap_text)
+        .build();
     wrap_row.add_suffix(&wrap_switch);
     wrap_row.set_activatable_widget(Some(&wrap_switch));
     group.add(&wrap_row);
 
     page.add(&group);
-    page
+    (page, whitespace_switch, wrap_switch)
 }
 
 fn build_llm_page(
