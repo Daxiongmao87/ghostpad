@@ -8,6 +8,20 @@ pub mod llamacpp;
 pub use huggingface::{HuggingFaceModel, ModelDownloader};
 pub use llamacpp::{InferenceConfig, LlamaCpp};
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum LlmReadiness {
+    /// LLM is ready to use
+    Ready,
+    /// Local provider needs model download
+    NeedsDownload { model_ref: String },
+    /// Remote provider needs endpoint configuration
+    NeedsEndpoint,
+    /// llama-cli not found for local provider
+    MissingLlamaCli,
+    /// No provider configured
+    NotConfigured,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ProviderKind {
     OpenAI,
@@ -173,6 +187,58 @@ impl LlmManager {
     /// Check if local inference is available
     pub fn is_local_available(&self) -> bool {
         self.llamacpp.is_some()
+    }
+
+    /// Check if LLM is ready for use
+    pub fn check_readiness(&self) -> LlmReadiness {
+        match self.config.provider {
+            ProviderKind::Local => {
+                // Check if llama-cli is available
+                if !self.is_local_available() {
+                    return LlmReadiness::MissingLlamaCli;
+                }
+
+                // Determine which model should be used
+                let model_ref = if self.config.override_model_path
+                    && !self.config.local_model_path.is_empty()
+                {
+                    // Check if override path exists
+                    let path = PathBuf::from(&self.config.local_model_path);
+                    if path.exists() {
+                        return LlmReadiness::Ready;
+                    } else {
+                        return LlmReadiness::NeedsDownload {
+                            model_ref: format!("Custom path: {}", self.config.local_model_path),
+                        };
+                    }
+                } else {
+                    // Use default model based on GPU/CPU selection
+                    if self.config.force_cpu_only {
+                        &self.config.default_cpu_model
+                    } else {
+                        &self.config.default_gpu_model
+                    }
+                };
+
+                // Check if model is downloaded
+                if self.is_model_downloaded(model_ref) {
+                    LlmReadiness::Ready
+                } else {
+                    LlmReadiness::NeedsDownload {
+                        model_ref: model_ref.to_string(),
+                    }
+                }
+            }
+            ProviderKind::OpenAI | ProviderKind::Gemini => {
+                // Check if endpoint is configured
+                if self.config.endpoint.is_empty() {
+                    LlmReadiness::NeedsEndpoint
+                } else {
+                    // Assume ready - we can't validate without making a request
+                    LlmReadiness::Ready
+                }
+            }
+        }
     }
 
     pub fn detect_gpus() -> Vec<GpuDevice> {

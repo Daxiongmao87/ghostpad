@@ -16,7 +16,7 @@ use uuid::Uuid;
 use anyhow::Result;
 
 use crate::document::{Document, derive_display_name};
-use crate::llm::{GpuDevice, LlmManager, ProviderKind};
+use crate::llm::{GpuDevice, LlmManager, LlmReadiness, ProviderKind};
 use crate::paths::AppPaths;
 use crate::settings::Settings;
 use crate::state_store::WindowState;
@@ -274,6 +274,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
     state.initialize();
     state.refresh_recent_menu();
     state.check_recovery_snapshots();
+    state.check_llm_readiness();
 
     {
         let prefs = state.preferences.window.clone();
@@ -1186,6 +1187,149 @@ impl AppState {
         }
         self.save_settings();
         self.apply_editor_settings();
+    }
+
+    fn check_llm_readiness(self: &Rc<Self>) {
+        // Skip if user disabled the check
+        if self.settings.borrow().skip_llm_startup_check {
+            return;
+        }
+
+        let readiness = self.llm_manager.borrow().check_readiness();
+
+        if readiness == LlmReadiness::Ready {
+            // All good, nothing to show
+            return;
+        }
+
+        self.show_llm_setup_dialog(readiness);
+    }
+
+    fn show_llm_setup_dialog(self: &Rc<Self>, readiness: LlmReadiness) {
+        let dialog = gtk::Dialog::builder()
+            .transient_for(&self.window)
+            .modal(true)
+            .title("LLM Setup")
+            .build();
+
+        let (message, action_label) = match &readiness {
+            LlmReadiness::NeedsDownload { model_ref } => (
+                format!(
+                    "Your LLM configuration uses local inference, but the model is not downloaded yet.\n\n\
+                    Model: {}\n\n\
+                    Would you like to download it now?",
+                    model_ref
+                ),
+                Some("Download Model"),
+            ),
+            LlmReadiness::MissingLlamaCli => (
+                "Local LLM inference requires llama-cli, which was not found on your system.\n\n\
+                Please install llama.cpp and ensure llama-cli is in your PATH, or switch to a remote provider in Preferences."
+                    .to_string(),
+                Some("Open Preferences"),
+            ),
+            LlmReadiness::NeedsEndpoint => (
+                "Your LLM provider requires an endpoint URL, but none is configured.\n\n\
+                Please configure your LLM settings in Preferences."
+                    .to_string(),
+                Some("Open Preferences"),
+            ),
+            LlmReadiness::NotConfigured => (
+                "LLM completions are not configured yet.\n\n\
+                Please configure your LLM settings in Preferences to enable AI-assisted code completion."
+                    .to_string(),
+                Some("Open Preferences"),
+            ),
+            LlmReadiness::Ready => return, // Should never reach here
+        };
+
+        // Build content
+        let vbox = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        vbox.set_margin_top(12);
+        vbox.set_margin_bottom(12);
+        vbox.set_margin_start(12);
+        vbox.set_margin_end(12);
+
+        let label = gtk::Label::new(Some(&message));
+        label.set_wrap(true);
+        label.set_max_width_chars(50);
+        vbox.append(&label);
+
+        // Add checkbox for "Don't show again"
+        let checkbox = gtk::CheckButton::with_label("Don't show this dialog again");
+        vbox.append(&checkbox);
+
+        dialog.content_area().append(&vbox);
+
+        dialog.add_button("Later", gtk::ResponseType::Cancel);
+
+        if let Some(label) = action_label {
+            dialog.add_button(label, gtk::ResponseType::Accept);
+            dialog.set_default_response(gtk::ResponseType::Accept);
+        }
+
+        let weak = Rc::downgrade(self);
+        let readiness_clone = readiness.clone();
+        dialog.connect_response(move |dialog, response| {
+            if let Some(state) = weak.upgrade() {
+                // Save "don't show again" preference
+                if checkbox.is_active() {
+                    let mut settings = state.settings.borrow_mut();
+                    settings.skip_llm_startup_check = true;
+                    drop(settings);
+                    state.save_settings();
+                }
+
+                if response == gtk::ResponseType::Accept {
+                    match &readiness_clone {
+                        LlmReadiness::NeedsDownload { model_ref } => {
+                            state.download_llm_model(model_ref.clone());
+                        }
+                        _ => {
+                            // Open preferences
+                            state.preferences.window.present();
+                        }
+                    }
+                }
+            }
+            dialog.close();
+        });
+
+        dialog.show();
+    }
+
+    fn download_llm_model(self: &Rc<Self>, model_ref: String) {
+        let toast = adw::Toast::new(&format!("Downloading model: {}", model_ref));
+        toast.set_timeout(0); // Show indefinitely
+        self.toast_overlay.add_toast(toast);
+
+        // TODO: This should be async with progress updates
+        // For now, just do it synchronously and show result
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            if let Some(state) = weak.upgrade() {
+                match state.llm_manager.borrow().download_model(&model_ref) {
+                    Ok(path) => {
+                        let success_toast = adw::Toast::new(&format!(
+                            "Model downloaded successfully: {}",
+                            path.display()
+                        ));
+                        success_toast.set_timeout(5);
+                        state.toast_overlay.add_toast(success_toast);
+                        state.status_label.set_text("Model ready for use");
+                    }
+                    Err(err) => {
+                        let error_toast =
+                            adw::Toast::new(&format!("Failed to download model: {}", err));
+                        error_toast.set_timeout(10);
+                        state.toast_overlay.add_toast(error_toast);
+                        state
+                            .status_label
+                            .set_text(&format!("Download failed: {}", err));
+                    }
+                }
+            }
+        });
     }
 
     fn attach_file_filters(dialog: &gtk::FileChooserDialog) {

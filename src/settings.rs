@@ -19,6 +19,8 @@ pub struct Settings {
     pub show_whitespace: bool,
     #[serde(default = "default_wrap_text")]
     pub wrap_text: bool,
+    #[serde(default)]
+    pub skip_llm_startup_check: bool,
 }
 
 fn default_wrap_text() -> bool {
@@ -34,6 +36,7 @@ impl Default for Settings {
             llm: LlmSettings::default(),
             show_whitespace: false,
             wrap_text: true,
+            skip_llm_startup_check: false,
         }
     }
 }
