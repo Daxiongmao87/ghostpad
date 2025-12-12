@@ -108,10 +108,11 @@ impl LoadedModel {
             .map_err(|e| anyhow!("Failed to create context: {:?}", e))?;
 
         // Log if this is a FIM prompt
-        let is_fim = prompt.contains("<|fim_prefix|>");
+        // DeepSeek uses <｜fim▁begin｜> format (U+2581 character, not space)
+        let is_fim = prompt.contains("<｜fim▁begin｜>") || prompt.contains("<|fim_prefix|>");
         if is_fim {
             eprintln!("=== FIM COMPLETION REQUEST ===");
-            eprintln!("FIM prompt detected, using direct tokenization");
+            eprintln!("FIM prompt detected");
             // Log first 200 chars of prompt for debugging
             let preview: String = prompt.chars().take(200).collect();
             eprintln!("Prompt preview: {:?}", preview);
@@ -222,7 +223,8 @@ impl LoadedModel {
             };
 
             // Filter out FIM sentinels if they leak into generation
-            if piece.contains("<|fim_") || piece.contains("<|file_sep|>") {
+            // Supports both Qwen/StarCoder style (<|fim_*|>) and DeepSeek style (<｜fim▁*｜>)
+            if piece.contains("<|fim_") || piece.contains("<|file_sep|>") || piece.contains("<｜fim") {
                 continue;
             }
 

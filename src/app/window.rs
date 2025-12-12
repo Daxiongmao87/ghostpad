@@ -1674,12 +1674,15 @@ impl AppState {
         let suffix = buffer.text(&cursor_iter, &suffix_end, true).to_string();
 
         // Format as FIM prompt (DeepSeek Coder style)
-        // Format: <｜fim begin｜>PREFIX<｜fim hole｜>SUFFIX<｜fim end｜>
+        // The model expects: <｜fim▁begin｜>PREFIX<｜fim▁hole｜>SUFFIX<｜fim▁end｜>
+        // Note: ▁ is U+2581 (LOWER ONE EIGHTH BLOCK), not a regular space!
+        // Model will generate what goes in the "hole" (middle)
         if suffix.is_empty() {
-            // No suffix - just return prefix (end of document)
+            // No suffix - just return prefix (end of document, no FIM needed)
             prefix
         } else {
-            format!("<｜fim begin｜>{}<｜fim hole｜>{}<｜fim end｜>", prefix, suffix)
+            // FIM format: prefix + hole marker + suffix, all wrapped
+            format!("<｜fim▁begin｜>{}<｜fim▁hole｜>{}<｜fim▁end｜>", prefix, suffix)
         }
     }
 
