@@ -1569,19 +1569,23 @@ impl AppState {
             return;
         }
 
-        // Check for deletions to avoid triggering on backspace
+        // Check for deletions/undo to avoid triggering on backspace or Ctrl+Z
         let current_count = self.buffer.char_count();
         let last_count = self.last_char_count.get();
         self.last_char_count.set(current_count);
 
-        if current_count < last_count {
-            // User deleted text, don't trigger auto-completion
-            // But still cancel existing debounce? Yes, probably.
+        // Only trigger completion on NET INSERTIONS (current > last)
+        // Don't trigger on deletions (current < last) or replacements (current == last)
+        if current_count <= last_count {
+            // User deleted text or replaced - don't trigger auto-completion
+            eprintln!("[handle_text_change] Char count: {} -> {} (not an insertion, skipping)", last_count, current_count);
             self.cancel_completion_debounce();
             self.manual_completion_inflight.set(false);
             self.with_suppressed_completion(|| self.document.dismiss_ghost_text());
             return;
         }
+        
+        eprintln!("[handle_text_change] Char count: {} -> {} (insertion, scheduling)", last_count, current_count);
 
         self.cancel_completion_debounce();
         self.manual_completion_inflight.set(false);
@@ -1695,8 +1699,9 @@ impl AppState {
         if accepted {
             log::info!("Ghost text accepted successfully");
             self.status_label.set_text("Completion accepted");
-            let generation = self.bump_completion_generation();
-            self.schedule_auto_completion(generation);
+            // Bump generation to invalidate any in-flight completions, but don't schedule new one
+            // User should continue typing before we offer another suggestion
+            self.bump_completion_generation();
         } else {
             log::warn!("No ghost text to accept");
         }

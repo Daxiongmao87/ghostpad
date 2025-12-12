@@ -92,10 +92,17 @@ impl AppState {
                     return Err(anyhow::anyhow!("Request cancelled (generation mismatch after lock)"));
                 }
 
-                // Get max tokens from settings
-                let max_tokens = manager.config().max_completion_tokens;
+                // Get max tokens from settings, but use smaller limit for FIM (mid-text) completion
+                let is_fim = context.contains("<｜fim▁begin｜>");
+                let max_tokens = if is_fim {
+                    // FIM completions should be short - just filling a small gap
+                    // Use max 50 tokens or settings value, whichever is smaller
+                    std::cmp::min(50, manager.config().max_completion_tokens)
+                } else {
+                    manager.config().max_completion_tokens
+                };
 
-                log::info!("Running inference for generation {}", generation);
+                log::info!("Running inference for generation {} (FIM={}, max_tokens={})", generation, is_fim, max_tokens);
                 // Call the complete method
                 let completion = manager.complete(&context, max_tokens)?;
                 Ok(completion)
