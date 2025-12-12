@@ -319,6 +319,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         file_monitor: RefCell::new(None),
         external_change_pending: Cell::new(false),
         last_edit: RefCell::new(None),
+        last_char_count: Cell::new(0),
         session_token: Uuid::new_v4().to_string(),
     });
 
@@ -336,41 +337,47 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         recent_list.connect_row_activated(move |_, row| {
             let idx = row.index();
             if idx < 0 {
                 return;
             }
-            if let Some(path) = state.recent_entries.borrow().get(idx as usize).cloned() {
-                state.confirm_unsaved_then(move |st| {
-                    if let Err(err) = st.load_document_from_path(&path) {
-                        st.present_error("Failed to open", &err.to_string());
-                    }
-                });
+            if let Some(state) = weak.upgrade() {
+                if let Some(path) = state.recent_entries.borrow().get(idx as usize).cloned() {
+                    state.confirm_unsaved_then(move |st| {
+                        if let Err(err) = st.load_document_from_path(&path) {
+                            st.present_error("Failed to open", &err.to_string());
+                        }
+                    });
+                }
             }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         search_entry.connect_changed(move |_| {
-            state.update_search_pattern();
+            if let Some(state) = weak.upgrade() {
+                state.update_search_pattern();
+            }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         autosave_list.connect_row_activated(move |list, row| {
             let idx = row.index();
             if idx < 0 {
                 return;
             }
-            if let Some((secs, _)) = state.autosave_options.get(idx as usize) {
-                if *secs == CUSTOM_AUTOSAVE_SENTINEL {
-                    state.prompt_custom_autosave();
-                } else {
-                    state.set_autosave_interval(*secs);
+            if let Some(state) = weak.upgrade() {
+                if let Some((secs, _)) = state.autosave_options.get(idx as usize) {
+                    if *secs == CUSTOM_AUTOSAVE_SENTINEL {
+                        state.prompt_custom_autosave();
+                    } else {
+                        state.set_autosave_interval(*secs);
+                    }
                 }
             }
             list.unselect_all();
@@ -378,101 +385,139 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         let combo = state.preferences.autosave_combo.clone();
         combo.connect_selected_notify(move |row: &adw::ComboRow| {
-            let idx = row.selected() as usize;
-            if let Some((secs, _)) = state.autosave_options.get(idx) {
-                if *secs == CUSTOM_AUTOSAVE_SENTINEL {
-                    state.prompt_custom_autosave();
-                } else if *secs != state.settings.borrow().autosave_interval_secs {
-                    state.set_autosave_interval(*secs);
+            if let Some(state) = weak.upgrade() {
+                let idx = row.selected() as usize;
+                if let Some((secs, _)) = state.autosave_options.get(idx) {
+                    if *secs == CUSTOM_AUTOSAVE_SENTINEL {
+                        state.prompt_custom_autosave();
+                    } else if *secs != state.settings.borrow().autosave_interval_secs {
+                        state.set_autosave_interval(*secs);
+                    }
                 }
             }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         let idle_switch = state.preferences.autosave_idle_switch.clone();
         idle_switch.connect_active_notify(move |switch_widget: &gtk::Switch| {
-            let active = switch_widget.is_active();
-            if active == state.settings.borrow().autosave_idle_only {
-                return;
+            if let Some(state) = weak.upgrade() {
+                let active = switch_widget.is_active();
+                if active == state.settings.borrow().autosave_idle_only {
+                    return;
+                }
+                state.set_autosave_idle_only(active);
             }
-            state.set_autosave_idle_only(active);
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         search_entry.connect_activate(move |_| {
-            state.find_next_match(true);
+            if let Some(state) = weak.upgrade() {
+                state.find_next_match(true);
+            }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         replace_entry.connect_activate(move |_| {
-            state.replace_current(true);
+            if let Some(state) = weak.upgrade() {
+                state.replace_current(true);
+            }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         case_toggle.connect_toggled(move |btn| {
-            state.search_settings.set_case_sensitive(btn.is_active());
-            state.update_search_pattern();
+            if let Some(state) = weak.upgrade() {
+                state.search_settings.set_case_sensitive(btn.is_active());
+                state.update_search_pattern();
+            }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         word_toggle.connect_toggled(move |btn| {
-            state
-                .search_settings
-                .set_at_word_boundaries(btn.is_active());
-            state.update_search_pattern();
+            if let Some(state) = weak.upgrade() {
+                state
+                    .search_settings
+                    .set_at_word_boundaries(btn.is_active());
+                state.update_search_pattern();
+            }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         regex_toggle.connect_toggled(move |btn| {
-            state.search_settings.set_regex_enabled(btn.is_active());
-            state.update_search_pattern();
+            if let Some(state) = weak.upgrade() {
+                state.search_settings.set_regex_enabled(btn.is_active());
+                state.update_search_pattern();
+            }
         });
     }
 
     {
-        let state = Rc::clone(&state);
-        prev_btn.connect_clicked(move |_| state.find_next_match(false));
+        let weak = Rc::downgrade(&state);
+        prev_btn.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.find_next_match(false);
+            }
+        });
     }
 
     {
-        let state = Rc::clone(&state);
-        next_btn.connect_clicked(move |_| state.find_next_match(true));
+        let weak = Rc::downgrade(&state);
+        next_btn.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.find_next_match(true);
+            }
+        });
     }
 
     {
-        let state = Rc::clone(&state);
-        replace_btn.connect_clicked(move |_| state.replace_current(true));
+        let weak = Rc::downgrade(&state);
+        replace_btn.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.replace_current(true);
+            }
+        });
     }
 
     {
-        let state = Rc::clone(&state);
-        replace_all_btn.connect_clicked(move |_| state.replace_all());
+        let weak = Rc::downgrade(&state);
+        replace_all_btn.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.replace_all();
+            }
+        });
     }
 
     {
-        let state = Rc::clone(&state);
-        close_btn.connect_clicked(move |_| state.hide_search_panel());
+        let weak = Rc::downgrade(&state);
+        close_btn.connect_clicked(move |_| {
+            if let Some(state) = weak.upgrade() {
+                state.hide_search_panel();
+            }
+        });
     }
 
     let key_controller = gtk::EventControllerKey::new();
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         key_controller.connect_key_pressed(move |_, key, _, modifier| {
+            let state = match weak.upgrade() {
+                Some(s) => s,
+                None => return Propagation::Proceed,
+            };
             let ctrl = modifier.contains(gdk::ModifierType::CONTROL_MASK);
             let shift = modifier.contains(gdk::ModifierType::SHIFT_MASK);
             if key == gdk::Key::Escape && state.search_revealer.reveals_child() {
@@ -512,54 +557,75 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
     state.update_search_pattern();
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         window.connect_close_request(move |win| {
+            let state = match weak.upgrade() {
+                Some(s) => s,
+                None => return Propagation::Proceed,
+            };
+            
             if !state.buffer.is_modified() {
                 state.persist_window_state();
                 return Propagation::Proceed;
             }
             let win_clone = win.clone();
             state.confirm_unsaved_then(move |st| {
+                // If the user chose to discard (or saved successfully), we must clear the modified flag
+                // before closing, otherwise the close_request handler will intercept it again.
+                st.buffer.set_modified(false);
                 st.persist_window_state();
-                win_clone.close();
+                
+                // Defer the close processing to let the dialog finish completely
+                let win = win_clone.clone();
+                glib::idle_add_local_once(move || {
+                    win.close();
+                });
             });
             Propagation::Stop
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         new_btn.connect_clicked(move |_| {
-            state.confirm_unsaved_then(move |st| {
-                if let Err(err) = st.new_document() {
-                    st.present_error("New document failed", &err.to_string());
-                } else {
-                    st.status_label.set_text("New document");
-                }
-            });
+            if let Some(state) = weak.upgrade() {
+                state.confirm_unsaved_then(move |st| {
+                    if let Err(err) = st.new_document() {
+                        st.present_error("New document failed", &err.to_string());
+                    } else {
+                        st.status_label.set_text("New document");
+                    }
+                });
+            }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         open_btn.connect_clicked(move |_| {
-            state.confirm_unsaved_then(move |st| {
-                st.open_document_dialog();
-            });
+            if let Some(state) = weak.upgrade() {
+                state.confirm_unsaved_then(move |st| {
+                    st.open_document_dialog();
+                });
+            }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         save_btn.connect_clicked(move |_| {
-            state.save_action();
+            if let Some(state) = weak.upgrade() {
+                state.save_action();
+            }
         });
     }
 
     {
-        let state = Rc::clone(&state);
+        let weak = Rc::downgrade(&state);
         save_as_btn.connect_clicked(move |_| {
-            state.save_as_dialog();
+            if let Some(state) = weak.upgrade() {
+                state.save_as_dialog();
+            }
         });
     }
 
@@ -613,6 +679,7 @@ pub(super) struct AppState {
     pub(super) file_monitor: RefCell<Option<gio::FileMonitor>>,
     pub(super) external_change_pending: Cell<bool>,
     pub(super) last_edit: RefCell<Option<Instant>>,
+    pub(super) last_char_count: Cell<i32>,
     pub(super) session_token: String,
 }
 
@@ -758,10 +825,6 @@ impl AppState {
                     }
                     
                     state.update_cursor_label();
-                    // Dismiss ghost text when cursor moves
-                    if state.document.ghost_is_active() {
-                        state.cancel_current_completion();
-                    }
                 }
             }
         });
@@ -1175,92 +1238,113 @@ impl AppState {
     }
 
     fn hook_llm_preferences(self: &Rc<Self>) {
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .llm_provider_combo
             .connect_selected_notify(move |row| {
-                let provider = preferences::provider_from_index(row.selected());
-                state.update_llm_provider(provider);
+                if let Some(state) = weak.upgrade() {
+                    let provider = preferences::provider_from_index(row.selected());
+                    state.update_llm_provider(provider);
+                }
             });
 
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .llm_endpoint_entry
             .connect_changed(move |entry| {
-                state.update_llm_endpoint(entry.text().to_string());
+                if let Some(state) = weak.upgrade() {
+                    state.update_llm_endpoint(entry.text().to_string());
+                }
             });
 
         let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .override_model_switch
             .connect_state_set(move |_, active| {
-                state.update_override_model(active);
+                if let Some(state) = weak.upgrade() {
+                    state.update_override_model(active);
+                }
                 Propagation::Proceed
             });
 
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .llm_model_entry
             .connect_changed(move |entry| {
-                state.update_llm_local_model(entry.text().to_string());
+                if let Some(state) = weak.upgrade() {
+                    state.update_llm_local_model(entry.text().to_string());
+                }
             });
 
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .gpu_combo
             .connect_selected_notify(move |row| {
-                let idx = row.selected();
-                state.update_gpu_selection(idx);
+                if let Some(state) = weak.upgrade() {
+                    let idx = row.selected();
+                    state.update_gpu_selection(idx);
+                }
             });
 
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .gpu_model_entry
             .connect_changed(move |entry| {
-                state.update_gpu_model(entry.text().to_string());
+                if let Some(state) = weak.upgrade() {
+                    state.update_gpu_model(entry.text().to_string());
+                }
             });
 
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .cpu_model_entry
             .connect_changed(move |entry| {
-                state.update_cpu_model(entry.text().to_string());
+                if let Some(state) = weak.upgrade() {
+                    state.update_cpu_model(entry.text().to_string());
+                }
             });
 
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .gpu_download_button
             .connect_clicked(move |_| {
-                let model_ref = state.preferences.gpu_model_entry.text().trim().to_string();
-                if model_ref.is_empty() {
-                    let toast = adw::Toast::new("Enter a GPU model reference before downloading.");
-                    toast.set_timeout(6);
-                    state.toast_overlay.add_toast(toast);
-                } else {
-                    state.download_llm_model(model_ref);
+                if let Some(state) = weak.upgrade() {
+                    let model_ref = state.preferences.gpu_model_entry.text().trim().to_string();
+                    if model_ref.is_empty() {
+                        let toast = adw::Toast::new("Enter a GPU model reference before downloading.");
+                        toast.set_timeout(6);
+                        state.toast_overlay.add_toast(toast);
+                    } else {
+                        state.download_llm_model(model_ref);
+                    }
                 }
             });
 
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .cpu_download_button
             .connect_clicked(move |_| {
-                let model_ref = state.preferences.cpu_model_entry.text().trim().to_string();
-                if model_ref.is_empty() {
-                    let toast = adw::Toast::new("Enter a CPU model reference before downloading.");
-                    toast.set_timeout(6);
-                    state.toast_overlay.add_toast(toast);
-                } else {
-                    state.download_llm_model(model_ref);
+                if let Some(state) = weak.upgrade() {
+                    let model_ref = state.preferences.cpu_model_entry.text().trim().to_string();
+                    if model_ref.is_empty() {
+                        let toast = adw::Toast::new("Enter a CPU model reference before downloading.");
+                        toast.set_timeout(6);
+                        state.toast_overlay.add_toast(toast);
+                    } else {
+                        state.download_llm_model(model_ref);
+                    }
                 }
             });
 
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .max_tokens_spin
             .connect_value_changed(move |spin| {
-                let value = spin.value() as usize;
-                state.update_max_completion_tokens(value);
+                if let Some(state) = weak.upgrade() {
+                    let value = spin.value() as usize;
+                    state.update_max_completion_tokens(value);
+                }
             });
     }
 
@@ -1389,19 +1473,23 @@ impl AppState {
     }
 
     fn hook_editor_preferences(self: &Rc<Self>) {
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .whitespace_switch
             .connect_state_set(move |_, active| {
-                state.set_show_whitespace(active);
+                if let Some(state) = weak.upgrade() {
+                    state.set_show_whitespace(active);
+                }
                 Propagation::Proceed
             });
 
-        let state = Rc::clone(self);
+        let weak = Rc::downgrade(self);
         self.preferences
             .wrap_switch
             .connect_state_set(move |_, active| {
-                state.set_wrap_text(active);
+                if let Some(state) = weak.upgrade() {
+                    state.set_wrap_text(active);
+                }
                 Propagation::Proceed
             });
     }
@@ -1410,6 +1498,21 @@ impl AppState {
         if self.are_completions_suppressed() {
             return;
         }
+
+        // Check for deletions to avoid triggering on backspace
+        let current_count = self.buffer.char_count();
+        let last_count = self.last_char_count.get();
+        self.last_char_count.set(current_count);
+
+        if current_count < last_count {
+            // User deleted text, don't trigger auto-completion
+            // But still cancel existing debounce? Yes, probably.
+            self.cancel_completion_debounce();
+            self.manual_completion_inflight.set(false);
+            self.with_suppressed_completion(|| self.document.dismiss_ghost_text());
+            return;
+        }
+
         self.cancel_completion_debounce();
         self.manual_completion_inflight.set(false);
         self.with_suppressed_completion(|| self.document.dismiss_ghost_text());
@@ -1422,40 +1525,17 @@ impl AppState {
             return;
         }
 
-        const DEBOUNCE_MS: u64 = 100;
-        const MAX_WAIT_MS: u64 = 500;
-
-        // Check if we should force completion due to max wait time
-        let now = Instant::now();
-        let should_force = if let Some(first_schedule) = self.last_completion_schedule.get() {
-            now.duration_since(first_schedule).as_millis() as u64 >= MAX_WAIT_MS
-        } else {
-            false
-        };
-
-        // Track when we first started scheduling (reset on force or when not debouncing)
-        if self.completion_debounce.borrow().is_none() || should_force {
-            self.last_completion_schedule.set(Some(now));
-        }
+        const DEBOUNCE_MS: u64 = 500;
 
         // ALWAYS cancel old debounce and schedule new one when content changes
-        // The running flag only prevents spawning concurrent threads, not scheduling
         self.cancel_completion_debounce();
 
-        let delay_ms = if should_force {
-            log::info!("Forcing completion after {}ms of continuous typing", MAX_WAIT_MS);
-            0 // Fire immediately
-        } else {
-            DEBOUNCE_MS
-        };
-
         let weak = Rc::downgrade(self);
-        let source = glib::timeout_add_local(std::time::Duration::from_millis(delay_ms), move || {
+        let source = glib::timeout_add_local(std::time::Duration::from_millis(DEBOUNCE_MS), move || {
             if let Some(state) = weak.upgrade() {
                 // Clear the stored source ID since we're about to complete
+                // Clear the stored source ID since we're about to complete
                 state.completion_debounce.borrow_mut().take();
-                // Reset the schedule tracker
-                state.last_completion_schedule.set(None);
 
                 if state.manual_completion_inflight.get() {
                     return ControlFlow::Break;

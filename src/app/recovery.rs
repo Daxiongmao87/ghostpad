@@ -122,7 +122,11 @@ impl AppState {
 
     fn discard_recovery_entry(&self, entry: &RecoveryEntry) {
         if entry.swap_path.exists() {
-            let _ = fs::remove_file(&entry.swap_path);
+            if let Err(e) = fs::remove_file(&entry.swap_path) {
+                log::warn!("Failed to delete swap file {:?}: {:?}", entry.swap_path, e);
+            } else {
+                log::info!("Deleted swap file {:?}", entry.swap_path);
+            }
         }
         if entry.meta_path.exists() {
             let _ = fs::remove_file(&entry.meta_path);

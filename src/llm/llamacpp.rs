@@ -132,11 +132,19 @@ impl LoadedModel {
                 break;
             }
 
-            // Decode token to string
-            let piece = self
-                .model
-                .token_to_str(new_token_id, Special::Plaintext)
-                .map_err(|e| anyhow!("Failed to decode token: {:?}", e))?;
+            // Use Tokenize to handle special tokens (like FIM sentinels) if Plaintext fails
+            let piece = match self.model.token_to_str(new_token_id, Special::Tokenize) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("Failed to decode token {}: {:?} (skipping)", new_token_id, e);
+                    continue;
+                }
+            };
+
+            // Filter out FIM sentinels if they leak into generation
+            if piece.contains("<|fim_") || piece.contains("<|file_sep|>") {
+                continue;
+            }
 
             result.push_str(&piece);
 

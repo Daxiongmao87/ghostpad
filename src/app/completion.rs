@@ -105,6 +105,11 @@ impl AppState {
         // Set up receiver on main thread
         let weak = Rc::downgrade(self);
         gtk4::glib::idle_add_local(move || {
+            // Stop polling if the window has been destroyed
+            if weak.upgrade().is_none() {
+                return gtk4::glib::ControlFlow::Break;
+            }
+
             // Try to receive result
             match rx.try_recv() {
                 Ok(result) => {
@@ -212,6 +217,10 @@ impl AppState {
         let status_label = self.llm_status_label.clone();
         let weak_for_trigger = Rc::downgrade(self);
         gtk4::glib::idle_add_local(move || {
+            if weak_for_trigger.upgrade().is_none() {
+                return gtk4::glib::ControlFlow::Break;
+            }
+
             match rx.try_recv() {
                 Ok(result) => {
                     // Stop and hide spinner
