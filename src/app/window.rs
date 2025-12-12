@@ -6,8 +6,9 @@ use std::time::Instant;
 use adw::prelude::*;
 use gtk4::gdk;
 use gtk4::gio;
-use gtk4::glib::{self, Propagation};
+use gtk4::glib::{self, ControlFlow, Propagation};
 use gtk4::prelude::*;
+use std::sync::mpsc;
 use gtk4::{self as gtk};
 use libadwaita as adw;
 use sourceview5::{SearchContext, SearchSettings, prelude::*};
@@ -16,7 +17,10 @@ use uuid::Uuid;
 use anyhow::Result;
 
 use crate::document::{Document, derive_display_name};
-use crate::llm::{GpuDevice, LlmManager, LlmReadiness, ProviderKind};
+use crate::llm::{
+    DownloadPhase, DownloadProgress, GpuDevice, HuggingFaceModel, LlmManager, LlmReadiness,
+    ProviderKind,
+};
 use crate::paths::AppPaths;
 use crate::settings::Settings;
 use crate::state_store::WindowState;
@@ -210,28 +214,54 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
     status_box.append(&autosave_button);
     status_box.append(&autosave_label);
 
-    let root = gtk::Box::builder()
+    let download_label = gtk::Label::new(None);
+    download_label.set_xalign(0.0);
+    let download_progress = gtk::ProgressBar::builder()
+        .hexpand(true)
+        .show_text(true)
+        .build();
+    download_progress.set_text(Some("Preparing download…"));
+
+    let download_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
+        .margin_start(12)
+        .margin_end(12)
+        .margin_top(6)
+        .margin_bottom(6)
+        .build();
+    download_box.append(&download_label);
+    download_box.append(&download_progress);
+
+    let download_revealer = gtk::Revealer::builder()
+        .transition_type(gtk::RevealerTransitionType::SlideDown)
+        .reveal_child(false)
+        .build();
+    download_revealer.set_child(Some(&download_box));
+
+    let content_column = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .build();
-    root.append(&scroller);
-    root.append(&search_revealer);
-    root.append(&status_box);
+    content_column.append(&scroller);
+    content_column.append(&search_revealer);
+    content_column.append(&download_revealer);
+
+    let overlay = adw::ToastOverlay::new();
+    overlay.set_child(Some(&content_column));
 
     let chrome = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .build();
     chrome.append(&header);
-    chrome.append(&root);
-
-    let overlay = adw::ToastOverlay::new();
-    overlay.set_child(Some(&chrome));
+    chrome.append(&overlay);
+    chrome.append(&status_box);
 
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title("Ghostpad")
         .default_width(window_state.width)
         .default_height(window_state.height)
-        .content(&overlay)
+        .content(&chrome)
         .build();
 
     let detected_gpus = LlmManager::detect_gpus();
@@ -251,6 +281,10 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         search_entry: search_entry.clone(),
         replace_entry: replace_entry.clone(),
         match_label: match_label.clone(),
+        download_revealer: download_revealer.clone(),
+        download_progress: download_progress.clone(),
+        download_label: download_label.clone(),
+        download_title: RefCell::new(None),
         search_settings: search_settings.clone(),
         search_context: search_context.clone(),
         recent_button: recent_button.clone(),
@@ -528,6 +562,10 @@ pub(super) struct AppState {
     pub(super) search_entry: gtk::Entry,
     pub(super) replace_entry: gtk::Entry,
     pub(super) match_label: gtk::Label,
+    pub(super) download_revealer: gtk::Revealer,
+    pub(super) download_progress: gtk::ProgressBar,
+    pub(super) download_label: gtk::Label,
+    pub(super) download_title: RefCell<Option<String>>,
     pub(super) search_settings: SearchSettings,
     pub(super) search_context: SearchContext,
     pub(super) recent_button: gtk::MenuButton,
@@ -559,6 +597,75 @@ impl AppState {
         self.sync_llm_preferences();
         self.hook_llm_preferences();
         self.hook_editor_preferences();
+    }
+
+    fn show_download_banner(&self, title: &str) {
+        self.download_title.replace(Some(title.to_string()));
+        self.download_label
+            .set_text(&format!("{} — preparing", title));
+        self.download_progress.set_fraction(0.0);
+        self.download_progress.set_text(Some("Preparing download…"));
+        self.download_revealer.set_reveal_child(true);
+    }
+
+    fn update_download_progress(&self, progress: DownloadProgress) {
+        let base = self
+            .download_title
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| "Model download".into());
+
+        match progress.phase {
+            DownloadPhase::Preparing => {
+                self.download_label
+                    .set_text(&format!("{} — preparing", base));
+                self.download_progress.pulse();
+                self.download_progress
+                    .set_text(Some("Preparing download…"));
+            }
+            DownloadPhase::VerifyingExisting => {
+                self.download_label
+                    .set_text(&format!("{} — verifying existing file", base));
+                self.update_progress_bar(progress);
+            }
+            DownloadPhase::Downloading => {
+                self.download_label
+                    .set_text(&format!("{} — downloading", base));
+                self.update_progress_bar(progress);
+            }
+            DownloadPhase::Finished => {
+                self.download_label
+                    .set_text(&format!("{} — finishing", base));
+                self.download_progress.set_fraction(1.0);
+                self.download_progress
+                    .set_text(Some("Download complete"));
+            }
+        }
+    }
+
+    fn hide_download_banner(&self) {
+        self.download_revealer.set_reveal_child(false);
+        self.download_title.replace(None);
+    }
+
+    fn update_progress_bar(&self, progress: DownloadProgress) {
+        if let Some(total) = progress.total.filter(|t| *t > 0) {
+            let fraction = (progress.downloaded as f64 / total as f64)
+                .clamp(0.0, 1.0);
+            self.download_progress.set_fraction(fraction);
+            self.download_progress.set_text(Some(&format!(
+                "{:.1}% ({} / {})",
+                fraction * 100.0,
+                human_readable_bytes(progress.downloaded),
+                human_readable_bytes(total)
+            )));
+        } else {
+            self.download_progress.pulse();
+            self.download_progress.set_text(Some(&format!(
+                "{} downloaded",
+                human_readable_bytes(progress.downloaded)
+            )));
+        }
     }
 
     fn hook_buffer_signals(self: &Rc<Self>) {
@@ -1019,6 +1126,48 @@ impl AppState {
             .connect_changed(move |entry| {
                 state.update_cpu_model(entry.text().to_string());
             });
+
+        let state = Rc::clone(self);
+        self.preferences
+            .gpu_download_button
+            .connect_clicked(move |_| {
+                let model_ref = state
+                    .preferences
+                    .gpu_model_entry
+                    .text()
+                    .trim()
+                    .to_string();
+                if model_ref.is_empty() {
+                    let toast = adw::Toast::new(
+                        "Enter a GPU model reference before downloading.",
+                    );
+                    toast.set_timeout(6);
+                    state.toast_overlay.add_toast(toast);
+                } else {
+                    state.download_llm_model(model_ref);
+                }
+            });
+
+        let state = Rc::clone(self);
+        self.preferences
+            .cpu_download_button
+            .connect_clicked(move |_| {
+                let model_ref = state
+                    .preferences
+                    .cpu_model_entry
+                    .text()
+                    .trim()
+                    .to_string();
+                if model_ref.is_empty() {
+                    let toast = adw::Toast::new(
+                        "Enter a CPU model reference before downloading.",
+                    );
+                    toast.set_timeout(6);
+                    state.toast_overlay.add_toast(toast);
+                } else {
+                    state.download_llm_model(model_ref);
+                }
+            });
     }
 
     fn update_llm_provider(&self, provider: ProviderKind) {
@@ -1299,35 +1448,89 @@ impl AppState {
     }
 
     fn download_llm_model(self: &Rc<Self>, model_ref: String) {
-        let toast = adw::Toast::new(&format!("Downloading model: {}", model_ref));
-        toast.set_timeout(0); // Show indefinitely
-        self.toast_overlay.add_toast(toast);
+        let trimmed = model_ref.trim();
+        if trimmed.is_empty() {
+            let toast = adw::Toast::new("Specify a model reference before downloading.");
+            toast.set_timeout(6);
+            self.toast_overlay.add_toast(toast);
+            return;
+        }
 
-        // TODO: This should be async with progress updates
-        // For now, just do it synchronously and show result
+        let parsed_model = match HuggingFaceModel::parse(trimmed) {
+            Ok(model) => model,
+            Err(err) => {
+                let error_toast =
+                    adw::Toast::new(&format!("Invalid model reference '{}': {}", trimmed, err));
+                error_toast.set_timeout(10);
+                self.toast_overlay.add_toast(error_toast);
+                self.status_label
+                    .set_text(&format!("Invalid model reference: {}", err));
+                return;
+            }
+        };
+
+        let model_name = parsed_model.filename();
+        self.show_download_banner(&model_name);
+
+        enum DownloadMsg {
+            Progress(DownloadProgress),
+            Finished(anyhow::Result<PathBuf>),
+        }
+
+        let downloader = self.llm_manager.borrow().downloader_handle();
+        let (sender, receiver) = mpsc::channel::<DownloadMsg>();
+
+        std::thread::spawn(move || {
+            let thread_sender = sender.clone();
+            let result = downloader.download_with_progress(&parsed_model, |progress| {
+                let _ = thread_sender.send(DownloadMsg::Progress(progress));
+            });
+            let _ = thread_sender.send(DownloadMsg::Finished(result));
+        });
+
         let weak = Rc::downgrade(self);
-        glib::spawn_future_local(async move {
-            if let Some(state) = weak.upgrade() {
-                match state.llm_manager.borrow().download_model(&model_ref) {
-                    Ok(path) => {
-                        let success_toast = adw::Toast::new(&format!(
-                            "Model downloaded successfully: {}",
-                            path.display()
-                        ));
-                        success_toast.set_timeout(5);
-                        state.toast_overlay.add_toast(success_toast);
-                        state.status_label.set_text("Model ready for use");
-                    }
-                    Err(err) => {
-                        let error_toast =
-                            adw::Toast::new(&format!("Failed to download model: {}", err));
-                        error_toast.set_timeout(10);
-                        state.toast_overlay.add_toast(error_toast);
-                        state
-                            .status_label
-                            .set_text(&format!("Download failed: {}", err));
+        glib::idle_add_local(move || match receiver.try_recv() {
+            Ok(DownloadMsg::Progress(progress)) => {
+                if let Some(state) = weak.upgrade() {
+                    state.update_download_progress(progress);
+                }
+                ControlFlow::Continue
+            }
+            Ok(DownloadMsg::Finished(result)) => {
+                if let Some(state) = weak.upgrade() {
+                    state.hide_download_banner();
+                    match result {
+                        Ok(path) => {
+                            let success_toast = adw::Toast::new(&format!(
+                                "Model downloaded successfully: {}",
+                                path.display()
+                            ));
+                            success_toast.set_timeout(5);
+                            state.toast_overlay.add_toast(success_toast);
+                            state.status_label.set_text("Model ready for use");
+                        }
+                        Err(err) => {
+                            let error_toast =
+                                adw::Toast::new(&format!("Failed to download model: {}", err));
+                            error_toast.set_timeout(10);
+                            state.toast_overlay.add_toast(error_toast);
+                            state
+                                .status_label
+                                .set_text(&format!("Download failed: {}", err));
+                        }
                     }
                 }
+                ControlFlow::Break
+            }
+            Err(mpsc::TryRecvError::Empty) => ControlFlow::Continue,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                if let Some(state) = weak.upgrade() {
+                    state.hide_download_banner();
+                    state
+                        .status_label
+                        .set_text("Download interrupted unexpectedly");
+                }
+                ControlFlow::Break
             }
         });
     }
@@ -1351,5 +1554,23 @@ impl AppState {
         all_filter.add_pattern("*");
         dialog.add_filter(&all_filter);
         dialog.set_filter(&text_filter);
+    }
+}
+
+fn human_readable_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    if bytes == 0 {
+        return "0 B".into();
+    }
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
     }
 }

@@ -1,155 +1,173 @@
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use anyhow::{anyhow, Context, Result};
+use std::path::Path;
+use std::sync::Arc;
+use anyhow::{anyhow, Result};
+use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::llama_backend::LlamaBackend;
+use llama_cpp_2::llama_batch::LlamaBatch;
+use llama_cpp_2::model::params::LlamaModelParams;
+use llama_cpp_2::model::{AddBos, LlamaModel, Special};
+use llama_cpp_2::sampling::LlamaSampler;
 
-/// Wrapper for llama.cpp CLI interactions
+/// Wrapper for llama.cpp library with in-process inference
 pub struct LlamaCpp {
-    binary_path: PathBuf,
+    backend: Arc<LlamaBackend>,
 }
 
 impl LlamaCpp {
-    /// Find llama-cli in PATH or use bundled version
+    /// Initialize llama.cpp backend
     pub fn new() -> Result<Self> {
-        // Try to find llama-cli in PATH
-        if let Ok(output) = Command::new("which").arg("llama-cli").output() {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout);
-                let path = path.trim();
-                if !path.is_empty() {
-                    log::info!("Found llama-cli at: {}", path);
-                    return Ok(Self {
-                        binary_path: PathBuf::from(path),
-                    });
-                }
-            }
-        }
+        let backend = LlamaBackend::init()
+            .map_err(|e| anyhow!("Failed to initialize llama.cpp backend: {:?}", e))?;
 
-        // Try common install locations
-        let candidates = vec![
-            "/usr/bin/llama-cli",
-            "/usr/local/bin/llama-cli",
-            "/opt/llama.cpp/llama-cli",
-        ];
-
-        for candidate in candidates {
-            if Path::new(candidate).exists() {
-                log::info!("Found llama-cli at: {}", candidate);
-                return Ok(Self {
-                    binary_path: PathBuf::from(candidate),
-                });
-            }
-        }
-
-        Err(anyhow!(
-            "llama-cli not found. Please install llama.cpp and ensure llama-cli is in PATH"
-        ))
+        Ok(Self {
+            backend: Arc::new(backend),
+        })
     }
 
-    /// Run inference with a loaded model
-    pub fn complete(
-        &self,
-        model_path: &Path,
-        prompt: &str,
-        max_tokens: usize,
-        device: Option<&str>,
-    ) -> Result<String> {
-        let mut cmd = Command::new(&self.binary_path);
-
-        cmd.arg("--model")
-            .arg(model_path)
-            .arg("--prompt")
-            .arg(prompt)
-            .arg("--n-predict")
-            .arg(max_tokens.to_string())
-            .arg("--temp")
-            .arg("0.7")
-            .arg("--ctx-size")
-            .arg("2048")
-            .arg("--log-disable")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        // Set device if specified
-        if let Some(device_id) = device {
-            cmd.arg("--device").arg(device_id);
-        }
-
-        log::debug!("Running llama-cli: {:?}", cmd);
-
-        let output = cmd
-            .output()
-            .context("Failed to execute llama-cli")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("llama-cli failed: {}", stderr));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        // llama-cli outputs the prompt + completion, so we need to strip the prompt
-        let completion = stdout.trim();
-
-        // Simple heuristic: find where the prompt ends
-        if let Some(idx) = completion.find(prompt) {
-            let result = &completion[idx + prompt.len()..];
-            Ok(result.trim().to_string())
-        } else {
-            Ok(completion.to_string())
-        }
-    }
-
-    /// Check if llama-cli can load a model (validation)
-    pub fn validate_model(&self, model_path: &Path) -> Result<()> {
+    /// Load a model from disk
+    pub fn load_model(&self, model_path: &Path, n_gpu_layers: Option<i32>) -> Result<LoadedModel> {
         if !model_path.exists() {
             return Err(anyhow!("Model file does not exist: {}", model_path.display()));
         }
 
-        let output = Command::new(&self.binary_path)
-            .arg("--model")
-            .arg(model_path)
-            .arg("--prompt")
-            .arg("test")
-            .arg("--n-predict")
-            .arg("1")
-            .arg("--log-disable")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .context("Failed to validate model")?;
-
-        if output.status.success() {
-            Ok(())
+        let params = if let Some(layers) = n_gpu_layers {
+            let layers_u32 = u32::try_from(layers)
+                .map_err(|_| anyhow!("GPU layers must be zero or positive"))?;
+            LlamaModelParams::default().with_n_gpu_layers(layers_u32)
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(anyhow!("Model validation failed: {}", stderr))
+            LlamaModelParams::default()
+        };
+
+        let model = LlamaModel::load_from_file(&self.backend, model_path, &params)
+            .map_err(|e| anyhow!("Failed to load model: {:?}", e))?;
+
+        Ok(LoadedModel {
+            backend: Arc::clone(&self.backend),
+            model: Arc::new(model),
+        })
+    }
+}
+
+/// A loaded model ready for inference
+pub struct LoadedModel {
+    backend: Arc<LlamaBackend>,
+    model: Arc<LlamaModel>,
+}
+
+impl LoadedModel {
+    /// Run inference with the loaded model
+    pub fn complete(
+        &self,
+        prompt: &str,
+        max_tokens: usize,
+        temperature: f32,
+    ) -> Result<String> {
+        // Create context
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(std::num::NonZeroU32::new(2048));
+
+        let mut ctx = self
+            .model
+            .new_context(&self.backend, ctx_params)
+            .map_err(|e| anyhow!("Failed to create context: {:?}", e))?;
+
+        // Tokenize the prompt
+        let tokens = self
+            .model
+            .str_to_token(prompt, AddBos::Always)
+            .map_err(|e| anyhow!("Failed to tokenize prompt: {:?}", e))?;
+
+        if tokens.is_empty() {
+            return Err(anyhow!("Tokenization resulted in empty token sequence"));
         }
+
+        let n_ctx = ctx.n_ctx() as usize;
+        let n_prompt = tokens.len();
+
+        if n_prompt >= n_ctx {
+            return Err(anyhow!("Prompt too long: {} tokens exceeds context size {}", n_prompt, n_ctx));
+        }
+
+        // Prepare batch for prompt processing
+        let mut batch = LlamaBatch::new(n_ctx, 1);
+
+        for (i, &token) in tokens.iter().enumerate() {
+            let is_last = i + 1 == tokens.len();
+            batch
+                .add(token, i as i32, &[0], is_last)
+                .map_err(|e| anyhow!("Failed to add token to batch: {:?}", e))?;
+        }
+
+        // Process the prompt
+        ctx.decode(&mut batch)
+            .map_err(|e| anyhow!("Failed to decode prompt: {:?}", e))?;
+
+        // Generate tokens
+        let mut result = String::new();
+        let mut n_cur = n_prompt;
+        let n_max = n_prompt + max_tokens;
+
+        let mut sampler = LlamaSampler::chain_simple([
+            LlamaSampler::temp(temperature),
+            LlamaSampler::greedy(),
+        ]);
+
+        while n_cur < n_max {
+            // Sample next token
+            let logits_index = batch.n_tokens() - 1;
+            let mut candidates_data = ctx.token_data_array_ith(logits_index);
+            sampler.apply(&mut candidates_data);
+            let new_token_id = sampler.sample(&ctx, logits_index);
+            sampler.accept(new_token_id);
+
+            // Check for EOS
+            if self.model.is_eog_token(new_token_id) {
+                break;
+            }
+
+            // Decode token to string
+            let piece = self
+                .model
+                .token_to_str(new_token_id, Special::Plaintext)
+                .map_err(|e| anyhow!("Failed to decode token: {:?}", e))?;
+
+            result.push_str(&piece);
+
+            // Prepare next batch
+            batch.clear();
+            batch.add(new_token_id, n_cur as i32, &[0], true)
+                .map_err(|e| anyhow!("Failed to add token to batch: {:?}", e))?;
+
+            // Decode
+            ctx.decode(&mut batch)
+                .map_err(|e| anyhow!("Failed to decode: {:?}", e))?;
+
+            n_cur += 1;
+        }
+
+        Ok(result)
     }
 
-    /// Get the path to the llama-cli binary
-    pub fn binary_path(&self) -> &Path {
-        &self.binary_path
+    /// Get the model reference
+    pub fn model(&self) -> &LlamaModel {
+        &self.model
     }
 }
 
 /// Configuration for a single inference run
 #[derive(Debug, Clone)]
 pub struct InferenceConfig {
-    pub model_path: PathBuf,
     pub prompt: String,
     pub max_tokens: usize,
-    pub device: Option<String>,
+    pub temperature: f32,
 }
 
 impl InferenceConfig {
-    pub fn new(model_path: PathBuf, prompt: String) -> Self {
+    pub fn new(prompt: String) -> Self {
         Self {
-            model_path,
             prompt,
             max_tokens: 512,
-            device: None,
+            temperature: 0.7,
         }
     }
 
@@ -158,8 +176,8 @@ impl InferenceConfig {
         self
     }
 
-    pub fn with_device(mut self, device: String) -> Self {
-        self.device = Some(device);
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = temperature;
         self
     }
 }

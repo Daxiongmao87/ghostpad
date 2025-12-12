@@ -17,7 +17,9 @@ pub(super) struct PreferencesUi {
     pub llm_model_entry: gtk::Entry,
     pub gpu_combo: adw::ComboRow,
     pub gpu_model_entry: gtk::Entry,
+    pub gpu_download_button: gtk::Button,
     pub cpu_model_entry: gtk::Entry,
+    pub cpu_download_button: gtk::Button,
     pub whitespace_switch: gtk::Switch,
     pub wrap_switch: gtk::Switch,
 }
@@ -71,7 +73,9 @@ pub(super) fn build_preferences(
         llm_model_entry,
         gpu_combo,
         gpu_model_entry,
+        gpu_download_button,
         cpu_model_entry,
+        cpu_download_button,
     ) = build_llm_page(&settings.llm, gpus);
     let theming_page = build_theming_page();
     let shortcuts_page = build_shortcuts_page();
@@ -98,7 +102,9 @@ pub(super) fn build_preferences(
         llm_model_entry,
         gpu_combo,
         gpu_model_entry,
+        gpu_download_button,
         cpu_model_entry,
+        cpu_download_button,
         whitespace_switch,
         wrap_switch,
     }
@@ -159,7 +165,9 @@ fn build_llm_page(
     gtk::Entry,
     adw::ComboRow,
     gtk::Entry,
+    gtk::Button,
     gtk::Entry,
+    gtk::Button,
 ) {
     let page = adw::PreferencesPage::builder().title("LLM").build();
 
@@ -251,7 +259,10 @@ fn build_llm_page(
         .hexpand(true)
         .text(&llm.default_gpu_model)
         .build();
+    let gpu_download_button = gtk::Button::with_label("Download");
     gpu_model_row.add_suffix(&gpu_model_entry);
+    gpu_model_row.add_suffix(&gpu_download_button);
+    gpu_model_row.set_activatable_widget(Some(&gpu_download_button));
     local_group.add(&gpu_model_row);
 
     let cpu_model_row = adw::ActionRow::builder()
@@ -262,7 +273,10 @@ fn build_llm_page(
         .hexpand(true)
         .text(&llm.default_cpu_model)
         .build();
+    let cpu_download_button = gtk::Button::with_label("Download");
     cpu_model_row.add_suffix(&cpu_model_entry);
+    cpu_model_row.add_suffix(&cpu_download_button);
+    cpu_model_row.set_activatable_widget(Some(&cpu_download_button));
     local_group.add(&cpu_model_row);
 
     let credentials_group = adw::PreferencesGroup::builder()
@@ -302,7 +316,9 @@ fn build_llm_page(
         model_entry,
         gpu_combo,
         gpu_model_entry,
+        gpu_download_button,
         cpu_model_entry,
+        cpu_download_button,
     )
 }
 

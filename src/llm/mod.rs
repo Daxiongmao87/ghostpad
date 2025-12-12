@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 pub mod huggingface;
 pub mod llamacpp;
 
-pub use huggingface::{HuggingFaceModel, ModelDownloader};
-pub use llamacpp::{InferenceConfig, LlamaCpp};
+pub use huggingface::{DownloadPhase, DownloadProgress, HuggingFaceModel, ModelDownloader};
+pub use llamacpp::{InferenceConfig, LlamaCpp, LoadedModel};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LlmReadiness {
@@ -67,7 +67,8 @@ impl Default for LlmSettings {
     }
 }
 
-const DEFAULT_GPU_MODEL: &str = "mradermacher/Luau-Qwen3-4B-FIM-v0.1-i1-GGUF:Q4_K_M";
+const DEFAULT_GPU_MODEL: &str =
+    "mradermacher/Luau-Qwen3-4B-FIM-v0.1-i1-GGUF:Luau-Qwen3-4B-FIM-v0.1.i1-Q4_K_M.gguf";
 const DEFAULT_CPU_MODEL: &str = "OleFranz/Qwen3-0.6B-Text-FIM-GGUF";
 
 fn default_gpu_model() -> String {
@@ -89,7 +90,7 @@ pub struct LlmManager {
     models_dir: PathBuf,
     downloader: ModelDownloader,
     llamacpp: Option<Arc<LlamaCpp>>,
-    current_model: Arc<Mutex<Option<PathBuf>>>,
+    loaded_model: Arc<Mutex<Option<LoadedModel>>>,
 }
 
 impl LlmManager {
@@ -98,7 +99,7 @@ impl LlmManager {
         let llamacpp = LlamaCpp::new().ok().map(Arc::new);
 
         if llamacpp.is_none() {
-            log::warn!("llama-cli not found - local inference will be unavailable");
+            log::warn!("llama.cpp library failed to initialize - local inference will be unavailable");
         }
 
         Self {
@@ -106,7 +107,7 @@ impl LlmManager {
             models_dir,
             downloader,
             llamacpp,
-            current_model: Arc::new(Mutex::new(None)),
+            loaded_model: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -122,6 +123,10 @@ impl LlmManager {
     pub fn download_model(&self, model_ref: &str) -> anyhow::Result<PathBuf> {
         let model = HuggingFaceModel::parse(model_ref)?;
         self.downloader.download(&model)
+    }
+
+    pub fn downloader_handle(&self) -> ModelDownloader {
+        self.downloader.clone()
     }
 
     /// Check if a model is downloaded
@@ -142,12 +147,17 @@ impl LlmManager {
         }
     }
 
-    /// Run inference with the configured model
-    pub fn complete(&self, prompt: &str, max_tokens: usize) -> anyhow::Result<String> {
+    /// Load the configured model
+    fn ensure_model_loaded(&self) -> anyhow::Result<()> {
         let llamacpp = self
             .llamacpp
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("llama-cli not available"))?;
+            .ok_or_else(|| anyhow::anyhow!("llama.cpp not available"))?;
+
+        // Check if already loaded
+        if self.loaded_model.lock().unwrap().is_some() {
+            return Ok(());
+        }
 
         // Determine which model to use
         let model_path = if self.config.override_model_path
@@ -173,15 +183,41 @@ impl LlmManager {
             }
         };
 
-        // Determine device
-        let device = if self.config.force_cpu_only {
-            None
+        // Determine GPU layers
+        let n_gpu_layers = if self.config.force_cpu_only {
+            Some(0)
         } else {
-            self.config.preferred_device.as_deref()
+            // Use all GPU layers by default when GPU is selected
+            Some(999) // llama.cpp will use as many as possible
         };
 
+        // Load the model
+        log::info!("Loading model: {}", model_path.display());
+        let loaded = llamacpp.load_model(&model_path, n_gpu_layers)?;
+
+        *self.loaded_model.lock().unwrap() = Some(loaded);
+
+        Ok(())
+    }
+
+    /// Run inference with the configured model
+    pub fn complete(&self, prompt: &str, max_tokens: usize) -> anyhow::Result<String> {
+        // Ensure model is loaded
+        self.ensure_model_loaded()?;
+
+        // Get the loaded model
+        let model_lock = self.loaded_model.lock().unwrap();
+        let model = model_lock
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Model not loaded"))?;
+
         // Run inference
-        llamacpp.complete(&model_path, prompt, max_tokens, device)
+        model.complete(prompt, max_tokens, 0.7)
+    }
+
+    /// Unload the current model
+    pub fn unload_model(&self) {
+        *self.loaded_model.lock().unwrap() = None;
     }
 
     /// Check if local inference is available
@@ -241,26 +277,10 @@ impl LlmManager {
         }
     }
 
+    /// Detect GPUs via system enumeration
+    /// Note: llama.cpp will automatically detect and use GPUs at runtime
+    /// This is just for UI display purposes
     pub fn detect_gpus() -> Vec<GpuDevice> {
-        use std::process::Command;
-
-        let output = Command::new("llama-cli")
-            .arg("--list-devices")
-            .output();
-
-        let Ok(output) = output else {
-            return Self::fallback_gpu_detection();
-        };
-
-        if !output.status.success() {
-            return Self::fallback_gpu_detection();
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Self::parse_gpu_list(&stdout)
-    }
-
-    fn fallback_gpu_detection() -> Vec<GpuDevice> {
         use std::fs;
         use std::path::Path;
         let mut devices = Vec::new();
@@ -306,25 +326,6 @@ impl LlmManager {
                 id: "0".to_string(),
                 name: "GPU (detected via /dev/dri)".to_string(),
             });
-        }
-
-        devices
-    }
-
-    fn parse_gpu_list(output: &str) -> Vec<GpuDevice> {
-        let mut devices = Vec::new();
-
-        for line in output.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with("Available") {
-                continue;
-            }
-
-            if let Some((id_part, name_part)) = line.split_once(':') {
-                let id = id_part.trim().to_string();
-                let name = name_part.trim().to_string();
-                devices.push(GpuDevice { id, name });
-            }
         }
 
         devices
