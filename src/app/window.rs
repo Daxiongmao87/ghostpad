@@ -82,7 +82,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .css_classes(["flat"])
         .halign(gtk::Align::Fill)
         .build();
-    
+
     let save_as_btn = gtk::Button::builder()
         .label("Save As…")
         .icon_name("document-save-as-symbolic")
@@ -167,7 +167,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .css_classes(["flat"])
         .build();
     let word_toggle = gtk::ToggleButton::builder()
-        .label("W") 
+        .label("W")
         .tooltip_text("Whole word")
         .css_classes(["flat"])
         .build();
@@ -187,7 +187,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .tooltip_text("Find next")
         .css_classes(["flat"])
         .build();
-    
+
     let replace_toggle_btn = gtk::ToggleButton::builder()
         .icon_name("edit-find-replace-symbolic")
         .tooltip_text("Toggle Replace")
@@ -222,7 +222,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
 
     let replace_btn = gtk::Button::with_label("Replace");
     let replace_all_btn = gtk::Button::with_label("Replace All");
-    
+
     let replace_row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
@@ -237,8 +237,9 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .reveal_child(false)
         .child(&replace_row)
         .build();
-    
-    replace_toggle_btn.bind_property("active", &replace_revealer, "reveal-child")
+
+    replace_toggle_btn
+        .bind_property("active", &replace_revealer, "reveal-child")
         .sync_create()
         .build();
 
@@ -614,7 +615,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
                 Some(s) => s,
                 None => return Propagation::Proceed,
             };
-            
+
             if !state.buffer.is_modified() {
                 state.persist_window_state();
                 return Propagation::Proceed;
@@ -625,7 +626,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
                 // before closing, otherwise the close_request handler will intercept it again.
                 st.buffer.set_modified(false);
                 st.persist_window_state();
-                
+
                 // Defer the close processing to let the dialog finish completely
                 let win = win_clone.clone();
                 glib::idle_add_local_once(move || {
@@ -764,7 +765,10 @@ impl AppState {
 
                 // Log Tab presses to debug
                 if keyval == gdk::Key::Tab {
-                    log::info!("Tab key pressed, ghost_is_active={}", app.document.ghost_is_active());
+                    log::info!(
+                        "Tab key pressed, ghost_is_active={}",
+                        app.document.ghost_is_active()
+                    );
                 }
 
                 if app.document.ghost_is_active() {
@@ -877,7 +881,7 @@ impl AppState {
                     if state.are_completions_suppressed() {
                         return;
                     }
-                    
+
                     state.update_cursor_label();
                 }
             }
@@ -1236,7 +1240,17 @@ impl AppState {
     }
 
     fn sync_llm_preferences(&self) {
-        let (provider, idx, endpoint, override_model, model_path, gpu_idx, gpu_model, cpu_model, max_tokens) = {
+        let (
+            provider,
+            idx,
+            endpoint,
+            override_model,
+            model_path,
+            gpu_idx,
+            gpu_model,
+            cpu_model,
+            max_tokens,
+        ) = {
             let settings = self.settings.borrow();
             let provider = settings.llm.provider;
             let idx = preferences::provider_index(&provider);
@@ -1278,9 +1292,7 @@ impl AppState {
         self.preferences
             .override_model_switch
             .set_active(override_model);
-        self.preferences
-            .llm_model_row
-            .set_sensitive(override_model);
+        self.preferences.llm_model_row.set_sensitive(override_model);
         self.preferences.llm_model_row.set_text(&model_path);
         self.preferences.gpu_combo.set_selected(gpu_idx as u32);
         self.preferences.gpu_model_row.set_text(&gpu_model);
@@ -1365,7 +1377,8 @@ impl AppState {
                 if let Some(state) = weak.upgrade() {
                     let model_ref = state.preferences.gpu_model_row.text().trim().to_string();
                     if model_ref.is_empty() {
-                        let toast = adw::Toast::new("Enter a GPU model reference before downloading.");
+                        let toast =
+                            adw::Toast::new("Enter a GPU model reference before downloading.");
                         toast.set_timeout(6);
                         state.toast_overlay.add_toast(toast);
                     } else {
@@ -1381,7 +1394,8 @@ impl AppState {
                 if let Some(state) = weak.upgrade() {
                     let model_ref = state.preferences.cpu_model_row.text().trim().to_string();
                     if model_ref.is_empty() {
-                        let toast = adw::Toast::new("Enter a CPU model reference before downloading.");
+                        let toast =
+                            adw::Toast::new("Enter a CPU model reference before downloading.");
                         toast.set_timeout(6);
                         state.toast_overlay.add_toast(toast);
                     } else {
@@ -1407,10 +1421,19 @@ impl AppState {
                 if let Some(state) = weak.upgrade() {
                     let defaults = LlmSettings::default();
                     // Updating text triggers the change signals which update settings
-                    state.preferences.gpu_model_row.set_text(&defaults.default_gpu_model);
-                    state.preferences.cpu_model_row.set_text(&defaults.default_cpu_model);
-                    state.preferences.max_tokens_spin.set_value(defaults.max_completion_tokens as f64);
-                    
+                    state
+                        .preferences
+                        .gpu_model_row
+                        .set_text(&defaults.default_gpu_model);
+                    state
+                        .preferences
+                        .cpu_model_row
+                        .set_text(&defaults.default_cpu_model);
+                    state
+                        .preferences
+                        .max_tokens_spin
+                        .set_value(defaults.max_completion_tokens as f64);
+
                     let toast = adw::Toast::new("LLM settings reset to defaults.");
                     toast.set_timeout(3);
                     state.toast_overlay.add_toast(toast);
@@ -1583,8 +1606,6 @@ impl AppState {
             self.with_suppressed_completion(|| self.document.dismiss_ghost_text());
             return;
         }
-        
-
 
         self.cancel_completion_debounce();
         self.manual_completion_inflight.set(false);
@@ -1604,23 +1625,24 @@ impl AppState {
         self.cancel_completion_debounce();
 
         let weak = Rc::downgrade(self);
-        let source = glib::timeout_add_local(std::time::Duration::from_millis(DEBOUNCE_MS), move || {
-            if let Some(state) = weak.upgrade() {
-                // Clear the stored source ID since we're about to complete
-                // Clear the stored source ID since we're about to complete
-                state.completion_debounce.borrow_mut().take();
+        let source =
+            glib::timeout_add_local(std::time::Duration::from_millis(DEBOUNCE_MS), move || {
+                if let Some(state) = weak.upgrade() {
+                    // Clear the stored source ID since we're about to complete
+                    // Clear the stored source ID since we're about to complete
+                    state.completion_debounce.borrow_mut().take();
 
-                if state.manual_completion_inflight.get() {
-                    return ControlFlow::Break;
+                    if state.manual_completion_inflight.get() {
+                        return ControlFlow::Break;
+                    }
+
+                    state.request_llm_completion_with_generation(
+                        CompletionTrigger::Automatic,
+                        generation,
+                    );
                 }
-
-                state.request_llm_completion_with_generation(
-                    CompletionTrigger::Automatic,
-                    generation,
-                );
-            }
-            ControlFlow::Break
-        });
+                ControlFlow::Break
+            });
         self.completion_debounce.borrow_mut().replace(source);
     }
 
@@ -1685,7 +1707,10 @@ impl AppState {
             prefix
         } else {
             // FIM format: prefix + hole marker + suffix, all wrapped
-            format!("<｜fim▁begin｜>{}<｜fim▁hole｜>{}<｜fim▁end｜>", prefix, suffix)
+            format!(
+                "<｜fim▁begin｜>{}<｜fim▁hole｜>{}<｜fim▁end｜>",
+                prefix, suffix
+            )
         }
     }
 
@@ -1883,7 +1908,9 @@ impl AppState {
         });
 
         let weak = Rc::downgrade(self);
-        glib::timeout_add_local(std::time::Duration::from_millis(50), move || match receiver.try_recv() {
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || match receiver
+            .try_recv()
+        {
             Ok(DownloadMsg::Progress(progress)) => {
                 if let Some(state) = weak.upgrade() {
                     state.update_download_progress(progress);

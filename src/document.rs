@@ -185,7 +185,7 @@ mod tests {
 
         let doc = Document::new();
         doc.buffer.set_text("Hello World");
-        
+
         // Move cursor to "Hello"
         let mut iter = doc.buffer.iter_at_offset(5);
         doc.buffer.place_cursor(&iter);
@@ -200,7 +200,7 @@ mod tests {
 
         // Verify marks
         assert!(doc.ghost_is_active());
-        
+
         // Dismiss
         doc.dismiss_ghost_text();
         let text_after = doc.current_text();

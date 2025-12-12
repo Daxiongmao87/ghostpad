@@ -52,9 +52,7 @@ pub(super) fn build_preferences(
     autosave_idle_row.add_suffix(&autosave_idle_switch);
     autosave_idle_row.set_activatable_widget(Some(&autosave_idle_switch));
 
-    let autosave_group = adw::PreferencesGroup::builder()
-        .title("Behavior")
-        .build();
+    let autosave_group = adw::PreferencesGroup::builder().title("Behavior").build();
     autosave_group.add(&autosave_combo);
     autosave_group.add(&autosave_idle_row);
 
@@ -91,7 +89,7 @@ pub(super) fn build_preferences(
     window.add(&autosave_page);
     window.add(&llm_page);
     window.add(&theming_page);
-    
+
     PreferencesUi {
         window,
         autosave_combo,
@@ -117,9 +115,7 @@ fn build_editor_page(settings: &Settings) -> (adw::PreferencesPage, gtk::Switch,
         .title("Editor")
         .icon_name("accessories-text-editor-symbolic")
         .build();
-    let group = adw::PreferencesGroup::builder()
-        .title("Appearance")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Appearance").build();
 
     // Font selection (simplified placeholder for now, ideally GtkFontDialog)
     let font_row = adw::ActionRow::builder()
@@ -129,9 +125,7 @@ fn build_editor_page(settings: &Settings) -> (adw::PreferencesPage, gtk::Switch,
     font_row.add_suffix(&gtk::Button::with_label("Select…")); // Keeping simple for now
     group.add(&font_row);
 
-    let whitespace_row = adw::ActionRow::builder()
-        .title("Show Whitespace")
-        .build();
+    let whitespace_row = adw::ActionRow::builder().title("Show Whitespace").build();
     let whitespace_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
         .active(settings.show_whitespace)
@@ -140,9 +134,7 @@ fn build_editor_page(settings: &Settings) -> (adw::PreferencesPage, gtk::Switch,
     whitespace_row.set_activatable_widget(Some(&whitespace_switch));
     group.add(&whitespace_row);
 
-    let wrap_row = adw::ActionRow::builder()
-        .title("Soft Wrap")
-        .build();
+    let wrap_row = adw::ActionRow::builder().title("Soft Wrap").build();
     let wrap_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
         .active(settings.wrap_text)
@@ -225,9 +217,7 @@ fn build_llm_page(
     local_group.add(&llm_model_row);
 
     // Hardware Acceleration
-    let device_group = adw::PreferencesGroup::builder()
-        .title("Hardware")
-        .build();
+    let device_group = adw::PreferencesGroup::builder().title("Hardware").build();
 
     let gpu_names: Vec<String> = std::iter::once("CPU Only".to_string())
         .chain(gpus.iter().map(|g| g.name.clone()))
@@ -261,7 +251,7 @@ fn build_llm_page(
         .icon_name("folder-download-symbolic")
         .valign(gtk::Align::Center)
         .tooltip_text("Download default model")
-        .css_classes(["flat"]) 
+        .css_classes(["flat"])
         .build();
     gpu_model_row.add_suffix(&gpu_download_button);
     device_group.add(&gpu_model_row);
@@ -278,7 +268,7 @@ fn build_llm_page(
         .build();
     cpu_model_row.add_suffix(&cpu_download_button);
     device_group.add(&cpu_model_row);
-    
+
     let reset_defaults_button = gtk::Button::builder()
         .label("Reset to Defaults")
         .margin_top(12)
@@ -289,30 +279,26 @@ fn build_llm_page(
 
     local_group.add(&device_group);
 
-    let advanced_group = adw::PreferencesGroup::builder()
-        .title("Generation")
-        .build();
-    
-    let max_tokens_row = adw::ActionRow::builder()
-        .title("Max Tokens")
-        .build();
+    let advanced_group = adw::PreferencesGroup::builder().title("Generation").build();
+
+    let max_tokens_row = adw::ActionRow::builder().title("Max Tokens").build();
     let max_tokens_spin = gtk::SpinButton::builder()
         .adjustment(&gtk::Adjustment::new(
             llm.max_completion_tokens as f64,
-            1.0, 512.0, 1.0, 10.0, 0.0,
+            1.0,
+            512.0,
+            1.0,
+            10.0,
+            0.0,
         ))
         .valign(gtk::Align::Center)
         .build();
     max_tokens_row.add_suffix(&max_tokens_spin);
     advanced_group.add(&max_tokens_row);
-    
+
     // Credentials
-    let secrets_group = adw::PreferencesGroup::builder()
-        .title("Security")
-        .build();
-    let token_row = adw::PasswordEntryRow::builder()
-        .title("API Key")
-        .build();
+    let secrets_group = adw::PreferencesGroup::builder().title("Security").build();
+    let token_row = adw::PasswordEntryRow::builder().title("API Key").build();
     secrets_group.add(&token_row);
 
     page.add(&provider_group);
@@ -358,9 +344,7 @@ fn build_theming_page() -> adw::PreferencesPage {
         .title("Appearance")
         .icon_name("preferences-desktop-theme-symbolic")
         .build();
-    let group = adw::PreferencesGroup::builder()
-        .title("Style")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Style").build();
     let theme_switch = gtk::Switch::builder().valign(gtk::Align::Center).build();
     let theme_row = adw::ActionRow::builder()
         .title("System Code Scheme")

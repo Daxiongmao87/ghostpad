@@ -67,7 +67,7 @@ impl AppState {
         // Prepare for background work
         let llm_manager = self.llm_manager.clone();
         let completion_generation = self.completion_generation.clone();
-        
+
         // Determine if this is a FIM (fill-in-the-middle) request
         let is_fim = context.contains("<｜fim▁begin｜>");
 
@@ -79,18 +79,26 @@ impl AppState {
             let result = (|| -> anyhow::Result<String> {
                 // Check if stale BEFORE trying to lock (avoid wasting mutex time)
                 if generation != completion_generation.get() {
-                    log::info!("Completion request {} is stale, aborting before inference", generation);
+                    log::info!(
+                        "Completion request {} is stale, aborting before inference",
+                        generation
+                    );
                     return Err(anyhow::anyhow!("Request cancelled (generation mismatch)"));
                 }
 
-                let manager = llm_manager.lock().map_err(|e| {
-                    anyhow::anyhow!("Failed to lock LLM manager: {}", e)
-                })?;
+                let manager = llm_manager
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("Failed to lock LLM manager: {}", e))?;
 
                 // Double-check after acquiring lock (in case it changed while waiting)
                 if generation != completion_generation.get() {
-                    log::info!("Completion request {} became stale while waiting for lock, aborting", generation);
-                    return Err(anyhow::anyhow!("Request cancelled (generation mismatch after lock)"));
+                    log::info!(
+                        "Completion request {} became stale while waiting for lock, aborting",
+                        generation
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Request cancelled (generation mismatch after lock)"
+                    ));
                 }
 
                 // Get max tokens from settings, but use smaller limit for FIM (mid-text) completion
@@ -102,7 +110,12 @@ impl AppState {
                     manager.config().max_completion_tokens
                 };
 
-                log::info!("Running inference for generation {} (FIM={}, max_tokens={})", generation, is_fim, max_tokens);
+                log::info!(
+                    "Running inference for generation {} (FIM={}, max_tokens={})",
+                    generation,
+                    is_fim,
+                    max_tokens
+                );
                 // Call the complete method
                 let completion = manager.complete(&context, max_tokens)?;
                 Ok(completion)
@@ -143,14 +156,19 @@ impl AppState {
                                 } else {
                                     completion_text
                                 };
-                                
+
                                 if !completion_text.trim().is_empty() {
-                                    log::info!("Completion generated: {} chars", completion_text.len());
+                                    log::info!(
+                                        "Completion generated: {} chars",
+                                        completion_text.len()
+                                    );
                                     // Show the completion as ghost text
                                     state.with_suppressed_completion(|| {
                                         state.document.insert_ghost_text(&completion_text);
                                     });
-                                    state.status_label.set_text("Suggestion ready (Tab to accept, Esc to dismiss)");
+                                    state.status_label.set_text(
+                                        "Suggestion ready (Tab to accept, Esc to dismiss)",
+                                    );
                                 } else {
                                     log::info!("Completion was empty");
                                     // Don't annoy user with "No completion generated"
@@ -166,11 +184,14 @@ impl AppState {
                                 } else {
                                     log::warn!("LLM completion failed: {}", err);
                                     // Show error in status for all completions
-                                    state.status_label.set_text(&format!("Completion error: {}", err));
+                                    state
+                                        .status_label
+                                        .set_text(&format!("Completion error: {}", err));
 
                                     if trigger == CompletionTrigger::Manual {
                                         // Also show toast for manual completions
-                                        let toast = adw::Toast::new(&format!("Completion failed: {}", err));
+                                        let toast =
+                                            adw::Toast::new(&format!("Completion failed: {}", err));
                                         toast.set_timeout(5);
                                         state.toast_overlay.add_toast(toast);
                                     }
@@ -216,9 +237,9 @@ impl AppState {
         std::thread::spawn(move || {
             log::info!("Starting background LLM model preload...");
             let result = (|| -> anyhow::Result<()> {
-                let manager = llm_manager.lock().map_err(|e| {
-                    anyhow::anyhow!("Failed to lock LLM manager: {}", e)
-                })?;
+                let manager = llm_manager
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("Failed to lock LLM manager: {}", e))?;
 
                 // Trigger model loading by requesting a dummy completion
                 // This will download and load the model if needed
@@ -233,7 +254,7 @@ impl AppState {
         let spinner = self.llm_spinner.clone();
         let status_label = self.llm_status_label.clone();
         let weak_for_trigger = Rc::downgrade(self);
-        
+
         log::info!("Starting idle poller for LLM preload...");
         gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             if weak_for_trigger.upgrade().is_none() {
@@ -262,7 +283,9 @@ impl AppState {
                             if let Some(weak_state) = weak_for_trigger.upgrade() {
                                 // Check if there's text in the buffer
                                 if weak_state.buffer.char_count() > 0 {
-                                    log::info!("User was typing during LLM load, triggering auto-completion");
+                                    log::info!(
+                                        "User was typing during LLM load, triggering auto-completion"
+                                    );
                                     // Schedule an auto-completion
                                     let generation = weak_state.bump_completion_generation();
                                     weak_state.schedule_auto_completion(generation);

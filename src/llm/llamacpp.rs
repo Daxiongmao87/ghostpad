@@ -25,7 +25,12 @@ impl LlamaCpp {
     }
 
     /// Load a model from disk
-    pub fn load_model(&self, model_path: &Path, n_gpu_layers: Option<i32>, main_gpu: Option<i32>) -> Result<LoadedModel> {
+    pub fn load_model(
+        &self,
+        model_path: &Path,
+        n_gpu_layers: Option<i32>,
+        main_gpu: Option<i32>,
+    ) -> Result<LoadedModel> {
         if !model_path.exists() {
             return Err(anyhow!(
                 "Model file does not exist: {}",
@@ -82,7 +87,8 @@ impl LoadedModel {
 
         // Tokenize prompt - llama-cpp-2's str_to_token has parse_special=true,
         // so special tokens like FIM markers will be parsed correctly
-        let tokens = self.model
+        let tokens = self
+            .model
             .str_to_token(prompt, AddBos::Always)
             .map_err(|e| anyhow!("Failed to tokenize prompt: {:?}", e))?;
 
@@ -138,14 +144,21 @@ impl LoadedModel {
             let piece = match self.model.token_to_str(new_token_id, Special::Tokenize) {
                 Ok(s) => s,
                 Err(e) => {
-                    log::warn!("Failed to decode token {}: {:?} (skipping)", new_token_id, e);
+                    log::warn!(
+                        "Failed to decode token {}: {:?} (skipping)",
+                        new_token_id,
+                        e
+                    );
                     continue;
                 }
             };
 
             // Filter out FIM sentinels if they leak into generation
             // Supports both Qwen/StarCoder style (<|fim_*|>) and DeepSeek style (<｜fim▁*｜>)
-            if piece.contains("<|fim_") || piece.contains("<|file_sep|>") || piece.contains("<｜fim") {
+            if piece.contains("<|fim_")
+                || piece.contains("<|file_sep|>")
+                || piece.contains("<｜fim")
+            {
                 continue;
             }
 

@@ -101,7 +101,7 @@ impl AppState {
         match self.write_autosave_file() {
             Ok(_timestamp) => {
                 // Autosave success
-            },
+            }
             Err(err) => {
                 log::warn!("Autosave error: {err:?}");
             }

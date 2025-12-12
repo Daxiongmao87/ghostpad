@@ -70,7 +70,8 @@ impl Default for LlmSettings {
 
 const DEFAULT_GPU_MODEL: &str =
     "TheBloke/deepseek-coder-1.3b-instruct-GGUF:deepseek-coder-1.3b-instruct.Q4_K_M.gguf";
-const DEFAULT_CPU_MODEL: &str = "TheBloke/deepseek-coder-1.3b-instruct-GGUF:deepseek-coder-1.3b-instruct.Q4_K_M.gguf";
+const DEFAULT_CPU_MODEL: &str =
+    "TheBloke/deepseek-coder-1.3b-instruct-GGUF:deepseek-coder-1.3b-instruct.Q4_K_M.gguf";
 const DEFAULT_MAX_COMPLETION_TOKENS: usize = 32;
 
 fn default_gpu_model() -> String {
@@ -164,7 +165,6 @@ impl LlmManager {
         {
             let lock = self.loaded_model.lock().unwrap();
             if lock.is_some() {
-
                 return Ok(());
             }
         }
@@ -194,32 +194,31 @@ impl LlmManager {
                 }
             };
 
-
-
         // Now check if a model is loaded and if we need to reload (e.g., different path)
         {
             let mut lock = self.loaded_model.lock().unwrap();
             if let Some(loaded) = lock.as_ref() {
-
                 if loaded.source_path == model_path {
-
                     return Ok(());
                 } else {
-                    log::info!("Loaded model path mismatch (current: {:?}, requested: {:?}), reloading...", loaded.source_path, model_path);
+                    log::info!(
+                        "Loaded model path mismatch (current: {:?}, requested: {:?}), reloading...",
+                        loaded.source_path,
+                        model_path
+                    );
 
                     // Drop the mismatched model to free memory BEFORE loading the new one
                     // This prevents OOM (Killed) when holding two models in memory
                 }
             } else {
-
             }
             // Explicitly set to None to drop the Arc<LoadedModel>
             *lock = None;
         }
-        
+
         // If we get here, we need to load/reload
         // Drop lock before loading to avoid holding it during load (though load_model doesn't take self)
-        
+
         // Determine GPU layers and device
         let (n_gpu_layers, main_gpu) = if self.config.force_cpu_only {
             log::info!("force_cpu_only is true, using CPU");
@@ -229,13 +228,15 @@ impl LlmManager {
             let layers = Some(999); // llama.cpp will use as many as possible
 
             // Parse the GPU device ID from preferred_device
-            log::info!("preferred_device setting: {:?}", self.config.preferred_device);
-            let gpu_device = self.config.preferred_device.as_ref()
-                .and_then(|s| {
-                    let parsed = s.parse::<i32>();
-                    log::info!("Parsed GPU device from '{}': {:?}", s, parsed);
-                    parsed.ok()
-                });
+            log::info!(
+                "preferred_device setting: {:?}",
+                self.config.preferred_device
+            );
+            let gpu_device = self.config.preferred_device.as_ref().and_then(|s| {
+                let parsed = s.parse::<i32>();
+                log::info!("Parsed GPU device from '{}': {:?}", s, parsed);
+                parsed.ok()
+            });
 
             (layers, gpu_device)
         };
@@ -255,12 +256,9 @@ impl LlmManager {
 
     /// Run inference with the configured model
     pub fn complete(&self, prompt: &str, max_tokens: usize) -> anyhow::Result<String> {
-
-        
         // Ensure model is loaded
 
         self.ensure_model_loaded()?;
-
 
         // Get the loaded model
         let model_lock = self.loaded_model.lock().unwrap();
