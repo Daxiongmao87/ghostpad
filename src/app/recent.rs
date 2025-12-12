@@ -29,7 +29,7 @@ impl AppState {
         }
         let entries = self.recent_entries.borrow();
         if entries.is_empty() {
-            self.recent_button.set_sensitive(false);
+            // No recent files
             let label = gtk::Label::new(Some("No recent files"));
             label.set_margin_top(8);
             label.set_margin_bottom(8);
@@ -43,7 +43,7 @@ impl AppState {
             self.recent_list.append(&row);
             return;
         }
-        self.recent_button.set_sensitive(true);
+        // List logic continues
         for path in entries.iter() {
             let display = path
                 .file_name()

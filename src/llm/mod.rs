@@ -69,8 +69,8 @@ impl Default for LlmSettings {
 }
 
 const DEFAULT_GPU_MODEL: &str =
-    "mradermacher/Luau-Qwen3-4B-FIM-v0.1-i1-GGUF:Luau-Qwen3-4B-FIM-v0.1.i1-Q4_K_M.gguf";
-const DEFAULT_CPU_MODEL: &str = "OleFranz/Qwen3-0.6B-Text-FIM-GGUF";
+    "TheBloke/deepseek-coder-1.3b-instruct-GGUF:deepseek-coder-1.3b-instruct.Q4_K_M.gguf";
+const DEFAULT_CPU_MODEL: &str = "TheBloke/deepseek-coder-1.3b-instruct-GGUF:deepseek-coder-1.3b-instruct.Q4_K_M.gguf";
 const DEFAULT_MAX_COMPLETION_TOKENS: usize = 32;
 
 fn default_gpu_model() -> String {
@@ -159,12 +159,19 @@ impl LlmManager {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("llama.cpp not available"))?;
 
-        // Check if already loaded
-        if self.loaded_model.lock().unwrap().is_some() {
-            return Ok(());
+        // FAST PATH: Check if ANY model is already loaded first, before resolving paths
+        // This avoids costly network requests to HuggingFace API on every completion
+        {
+            let lock = self.loaded_model.lock().unwrap();
+            if lock.is_some() {
+                eprintln!("[ensure_model_loaded] Model already loaded, skipping path resolution (fast path)");
+                return Ok(());
+            }
         }
 
-        // Determine which model to use
+        eprintln!("[ensure_model_loaded] No model loaded, resolving path (this may be slow)...");
+
+        // Determine which model to use (this may involve network requests for HF alias resolution)
         let model_path =
             if self.config.override_model_path && !self.config.local_model_path.is_empty() {
                 // Use override path
@@ -187,6 +194,34 @@ impl LlmManager {
                 }
             };
 
+        eprintln!("[ensure_model_loaded] Path resolved: {:?}", model_path);
+
+        // Now check if a model is loaded and if we need to reload (e.g., different path)
+        {
+            let mut lock = self.loaded_model.lock().unwrap();
+            if let Some(loaded) = lock.as_ref() {
+                eprintln!("[ensure_model_loaded] Checking loaded model path...");
+                eprintln!("[ensure_model_loaded] Current path: {:?}", loaded.source_path);
+                eprintln!("[ensure_model_loaded] Requested path: {:?}", model_path);
+                if loaded.source_path == model_path {
+                    eprintln!("[ensure_model_loaded] Path matches, returning early");
+                    return Ok(());
+                } else {
+                    log::info!("Loaded model path mismatch (current: {:?}, requested: {:?}), reloading...", loaded.source_path, model_path);
+                    eprintln!("[ensure_model_loaded] Path MISMATCH, will reload");
+                    // Drop the mismatched model to free memory BEFORE loading the new one
+                    // This prevents OOM (Killed) when holding two models in memory
+                }
+            } else {
+                eprintln!("[ensure_model_loaded] No model currently loaded, will load");
+            }
+            // Explicitly set to None to drop the Arc<LoadedModel>
+            *lock = None;
+        }
+        
+        // If we get here, we need to load/reload
+        // Drop lock before loading to avoid holding it during load (though load_model doesn't take self)
+        
         // Determine GPU layers and device
         let (n_gpu_layers, main_gpu) = if self.config.force_cpu_only {
             log::info!("force_cpu_only is true, using CPU");
@@ -222,8 +257,12 @@ impl LlmManager {
 
     /// Run inference with the configured model
     pub fn complete(&self, prompt: &str, max_tokens: usize) -> anyhow::Result<String> {
+        eprintln!("[{:?}] LlmManager::complete() called", std::time::SystemTime::now());
+        
         // Ensure model is loaded
+        eprintln!("[{:?}] Calling ensure_model_loaded()...", std::time::SystemTime::now());
         self.ensure_model_loaded()?;
+        eprintln!("[{:?}] ensure_model_loaded() complete", std::time::SystemTime::now());
 
         // Get the loaded model
         let model_lock = self.loaded_model.lock().unwrap();
@@ -232,6 +271,7 @@ impl LlmManager {
             .ok_or_else(|| anyhow::anyhow!("Model not loaded"))?;
 
         // Run inference
+        eprintln!("[{:?}] Calling model.complete()...", std::time::SystemTime::now());
         model.complete(prompt, max_tokens, 0.7)
     }
 

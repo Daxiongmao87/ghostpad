@@ -19,7 +19,7 @@ use anyhow::Result;
 use crate::document::{Document, derive_display_name};
 use crate::llm::{
     DownloadPhase, DownloadProgress, GpuDevice, HuggingFaceModel, LlmManager, LlmReadiness,
-    ProviderKind,
+    LlmSettings, ModelDownloader, ProviderKind,
 };
 use crate::paths::AppPaths;
 use crate::settings::Settings;
@@ -36,6 +36,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         settings.llm.clone(),
         paths.models_dir.clone(),
     )));
+    let model_downloader = ModelDownloader::new(paths.models_dir.clone());
 
     let document = Document::new();
     let buffer = document.buffer();
@@ -61,33 +62,83 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .title_widget(&gtk::Label::new(Some("Ghostpad")))
         .build();
     let new_btn = gtk::Button::from_icon_name("document-new-symbolic");
-    new_btn.set_tooltip_text(Some("New document"));
+    new_btn.set_tooltip_text(Some("New window"));
     let open_btn = gtk::Button::from_icon_name("document-open-symbolic");
     open_btn.set_tooltip_text(Some("Open…"));
+
+    // Main Menu Popover
+    let menu_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(0)
+        .margin_top(6)
+        .margin_bottom(6)
+        .margin_start(6)
+        .margin_end(6)
+        .build();
+
+    let save_btn = gtk::Button::builder()
+        .label("Save")
+        .icon_name("document-save-symbolic")
+        .css_classes(["flat"])
+        .halign(gtk::Align::Fill)
+        .build();
+    
+    let save_as_btn = gtk::Button::builder()
+        .label("Save As…")
+        .icon_name("document-save-as-symbolic")
+        .css_classes(["flat"])
+        .halign(gtk::Align::Fill)
+        .build();
+
+    let recent_btn_inner = gtk::Button::builder()
+        .label("Recent Files")
+        .icon_name("document-open-recent-symbolic")
+        .css_classes(["flat"])
+        .halign(gtk::Align::Fill)
+        .build();
+
+    // Re-use logic for recent files: The separate Recent popover is now triggered by this button
+    // We attach the recent list to a new popover attached to this button
     let recent_list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .build();
     let recent_popover = gtk::Popover::builder()
-        .has_arrow(true)
+        .has_arrow(false)
         .child(&recent_list)
         .build();
-    let recent_button = gtk::MenuButton::builder()
-        .icon_name("document-open-recent-symbolic")
-        .tooltip_text("Recent files")
-        .popover(&recent_popover)
+    recent_btn_inner.connect_clicked(move |btn| {
+        recent_popover.set_parent(btn);
+        recent_popover.popup();
+    });
+
+    let prefs_button = gtk::Button::builder()
+        .label("Preferences")
+        .icon_name("emblem-system-symbolic")
+        .css_classes(["flat"])
+        .halign(gtk::Align::Fill)
         .build();
-    let save_btn = gtk::Button::from_icon_name("document-save-symbolic");
-    save_btn.set_tooltip_text(Some("Save"));
-    let save_as_btn = gtk::Button::from_icon_name("document-save-as-symbolic");
-    save_as_btn.set_tooltip_text(Some("Save As…"));
-    let prefs_button = gtk::Button::from_icon_name("emblem-system-symbolic");
-    prefs_button.set_tooltip_text(Some("Preferences"));
+
+    menu_box.append(&save_btn);
+    menu_box.append(&save_as_btn);
+    menu_box.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    menu_box.append(&recent_btn_inner);
+    menu_box.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    menu_box.append(&prefs_button);
+
+    let menu_popover = gtk::Popover::builder()
+        .child(&menu_box)
+        .has_arrow(true)
+        .build();
+
+    let menu_button = gtk::MenuButton::builder()
+        .icon_name("open-menu-symbolic")
+        .tooltip_text("Main Menu")
+        .popover(&menu_popover)
+        .build();
+
     header.pack_start(&new_btn);
     header.pack_start(&open_btn);
-    header.pack_start(&recent_button);
-    header.pack_end(&prefs_button);
-    header.pack_end(&save_as_btn);
-    header.pack_end(&save_btn);
+    header.pack_end(&menu_button);
 
     let scroller = gtk::ScrolledWindow::builder()
         .hexpand(true)
@@ -109,56 +160,98 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .hexpand(true)
         .build();
 
-    let case_toggle = gtk::ToggleButton::with_label("Aa");
-    case_toggle.set_tooltip_text(Some("Match case"));
-    let word_toggle = gtk::ToggleButton::with_label("W");
-    word_toggle.set_tooltip_text(Some("Whole word"));
-    let regex_toggle = gtk::ToggleButton::with_label(".*");
-    regex_toggle.set_tooltip_text(Some("Regex"));
+    // Use icon names where standard ones exist, or text for specificity
+    let case_toggle = gtk::ToggleButton::builder()
+        .label("Aa")
+        .tooltip_text("Match case")
+        .css_classes(["flat"])
+        .build();
+    let word_toggle = gtk::ToggleButton::builder()
+        .label("W") 
+        .tooltip_text("Whole word")
+        .css_classes(["flat"])
+        .build();
+    let regex_toggle = gtk::ToggleButton::builder()
+        .label(".*")
+        .tooltip_text("Regular expression")
+        .css_classes(["flat"])
+        .build();
 
-    let prev_btn = gtk::Button::from_icon_name("go-up-symbolic");
-    prev_btn.set_tooltip_text(Some("Find previous"));
-    let next_btn = gtk::Button::from_icon_name("go-down-symbolic");
-    next_btn.set_tooltip_text(Some("Find next"));
-    let replace_btn = gtk::Button::with_label("Replace");
-    let replace_all_btn = gtk::Button::with_label("Replace All");
-    let close_btn = gtk::Button::from_icon_name("window-close-symbolic");
-    close_btn.set_tooltip_text(Some("Close search"));
+    let prev_btn = gtk::Button::builder()
+        .icon_name("go-up-symbolic")
+        .tooltip_text("Find previous")
+        .css_classes(["flat"])
+        .build();
+    let next_btn = gtk::Button::builder()
+        .icon_name("go-down-symbolic")
+        .tooltip_text("Find next")
+        .css_classes(["flat"])
+        .build();
+    
+    let replace_toggle_btn = gtk::ToggleButton::builder()
+        .icon_name("edit-find-replace-symbolic")
+        .tooltip_text("Toggle Replace")
+        .css_classes(["flat"])
+        .build();
 
-    let match_label = gtk::Label::new(Some("0 matches"));
+    let close_btn = gtk::Button::builder()
+        .icon_name("window-close-symbolic")
+        .tooltip_text("Close search")
+        .css_classes(["flat"])
+        .build();
+
+    let match_label = gtk::Label::new(Some("0"));
     match_label.add_css_class("dim-label");
+    match_label.set_width_chars(3); // Fix width to avoid jitter
 
     let search_row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
         .build();
     search_row.append(&search_entry);
+    search_row.append(&match_label);
+    search_row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     search_row.append(&case_toggle);
     search_row.append(&word_toggle);
     search_row.append(&regex_toggle);
+    search_row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     search_row.append(&prev_btn);
     search_row.append(&next_btn);
-    search_row.append(&match_label);
+    search_row.append(&replace_toggle_btn);
     search_row.append(&close_btn);
 
+    let replace_btn = gtk::Button::with_label("Replace");
+    let replace_all_btn = gtk::Button::with_label("Replace All");
+    
     let replace_row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
+        .margin_top(6)
         .build();
     replace_row.append(&replace_entry);
     replace_row.append(&replace_btn);
     replace_row.append(&replace_all_btn);
 
+    let replace_revealer = gtk::Revealer::builder()
+        .transition_type(gtk::RevealerTransitionType::SlideDown)
+        .reveal_child(false)
+        .child(&replace_row)
+        .build();
+    
+    replace_toggle_btn.bind_property("active", &replace_revealer, "reveal-child")
+        .sync_create()
+        .build();
+
     let search_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(6)
-        .margin_start(12)
-        .margin_end(12)
+        .spacing(0) // Spacing handled by replace_row margin
+        .margin_start(6)
+        .margin_end(6)
         .margin_top(6)
         .margin_bottom(6)
         .build();
     search_box.append(&search_row);
-    search_box.append(&replace_row);
+    search_box.append(&replace_revealer);
 
     let search_revealer = gtk::Revealer::builder()
         .transition_type(gtk::RevealerTransitionType::SlideDown)
@@ -166,41 +259,10 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .child(&search_box)
         .build();
 
-    let status_label = gtk::Label::new(Some("Ready"));
+    let status_label = gtk::Label::new(None); // Empty by default
     status_label.set_xalign(0.0);
     let cursor_label = gtk::Label::new(Some("Ln 1, Col 1"));
-    let autosave_label = gtk::Label::new(None);
-    let autosave_options: Vec<(u64, &'static str)> = vec![
-        (0, "Off"),
-        (15, "Every 15s"),
-        (30, "Every 30s"),
-        (60, "Every 60s"),
-        (300, "Every 5m"),
-        (CUSTOM_AUTOSAVE_SENTINEL, "Custom…"),
-    ];
-    let autosave_list = gtk::ListBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .build();
-    for (_, label) in autosave_options.iter() {
-        let row = gtk::ListBoxRow::builder().activatable(true).build();
-        row.set_selectable(false);
-        let text = gtk::Label::new(Some(label));
-        text.set_xalign(0.0);
-        text.set_margin_start(12);
-        text.set_margin_end(12);
-        text.set_margin_top(6);
-        text.set_margin_bottom(6);
-        row.set_child(Some(&text));
-        autosave_list.append(&row);
-    }
-    let autosave_popover = gtk::Popover::builder()
-        .has_arrow(true)
-        .child(&autosave_list)
-        .build();
-    let autosave_button = gtk::MenuButton::builder()
-        .label("Autosave")
-        .popover(&autosave_popover)
-        .build();
+    // Autosave UI removed from status bar
 
     let llm_spinner = gtk::Spinner::new();
     llm_spinner.hide();
@@ -218,8 +280,6 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .build();
     status_box.append(&status_label);
     status_box.append(&cursor_label);
-    status_box.append(&autosave_button);
-    status_box.append(&autosave_label);
     status_box.append(&llm_spinner);
     status_box.append(&llm_status_label);
 
@@ -273,19 +333,28 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .content(&chrome)
         .build();
 
+    // Move autosave options definition here for preferences
+    let autosave_options: Vec<(u64, &'static str)> = vec![
+        (0, "Off"),
+        (15, "Every 15s"),
+        (30, "Every 30s"),
+        (60, "Every 60s"),
+        (300, "Every 5m"),
+        (CUSTOM_AUTOSAVE_SENTINEL, "Custom…"),
+    ];
+
     let detected_gpus = LlmManager::detect_gpus();
     let preferences_ui =
         preferences::build_preferences(&window, &autosave_options, &settings, &detected_gpus);
 
     let state = Rc::new(AppState {
-        window: window.clone(),
+        window: window.downgrade(),
         toast_overlay: overlay.clone(),
         document,
         buffer,
         file_path: RefCell::new(None),
         status_label,
         cursor_label,
-        autosave_label,
         llm_spinner: llm_spinner.clone(),
         llm_status_label: llm_status_label.clone(),
         search_revealer: search_revealer.clone(),
@@ -304,13 +373,12 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         last_completion_schedule: Cell::new(None),
         search_settings: search_settings.clone(),
         search_context: search_context.clone(),
-        recent_button: recent_button.clone(),
         recent_list: recent_list.clone(),
         recent_entries: RefCell::new(initial_recent),
-        autosave_button: autosave_button.clone(),
         autosave_options,
         preferences: preferences_ui,
         llm_manager: Arc::clone(&llm_manager),
+        model_downloader,
         gpus: detected_gpus,
         paths,
         settings: RefCell::new(settings),
@@ -338,7 +406,8 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
 
     {
         let weak = Rc::downgrade(&state);
-        recent_list.connect_row_activated(move |_, row| {
+        let list = state.recent_list.clone();
+        list.connect_row_activated(move |_, row: &gtk::ListBoxRow| {
             let idx = row.index();
             if idx < 0 {
                 return;
@@ -364,25 +433,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         });
     }
 
-    {
-        let weak = Rc::downgrade(&state);
-        autosave_list.connect_row_activated(move |list, row| {
-            let idx = row.index();
-            if idx < 0 {
-                return;
-            }
-            if let Some(state) = weak.upgrade() {
-                if let Some((secs, _)) = state.autosave_options.get(idx as usize) {
-                    if *secs == CUSTOM_AUTOSAVE_SENTINEL {
-                        state.prompt_custom_autosave();
-                    } else {
-                        state.set_autosave_interval(*secs);
-                    }
-                }
-            }
-            list.unselect_all();
-        });
-    }
+    // Autosave status bar logic removed
 
     {
         let weak = Rc::downgrade(&state);
@@ -587,15 +638,11 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
 
     {
         let weak = Rc::downgrade(&state);
+        let app_clone = application.clone();
         new_btn.connect_clicked(move |_| {
-            if let Some(state) = weak.upgrade() {
-                state.confirm_unsaved_then(move |st| {
-                    if let Err(err) = st.new_document() {
-                        st.present_error("New document failed", &err.to_string());
-                    } else {
-                        st.status_label.set_text("New document");
-                    }
-                });
+            // Spawn new window
+            if let Err(err) = crate::app::build_ui(&app_clone) {
+                log::error!("Failed to spawn new window: {:?}", err);
             }
         });
     }
@@ -631,6 +678,11 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
 
     window.present();
 
+    // Keep state alive by attaching it to the window
+    unsafe {
+        window.set_data("ghostpad_app_state", state.clone());
+    }
+
     // Start loading LLM model in background after window is visible
     state.preload_llm_model();
 
@@ -638,14 +690,13 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
 }
 
 pub(super) struct AppState {
-    pub(super) window: adw::ApplicationWindow,
+    pub(super) window: glib::WeakRef<adw::ApplicationWindow>,
     pub(super) toast_overlay: adw::ToastOverlay,
     pub(super) document: Rc<Document>,
     pub(super) buffer: sourceview5::Buffer,
     pub(super) file_path: RefCell<Option<PathBuf>>,
     pub(super) status_label: gtk::Label,
     pub(super) cursor_label: gtk::Label,
-    pub(super) autosave_label: gtk::Label,
     pub(super) llm_spinner: gtk::Spinner,
     pub(super) llm_status_label: gtk::Label,
     pub(super) search_revealer: gtk::Revealer,
@@ -664,13 +715,12 @@ pub(super) struct AppState {
     pub(super) last_completion_schedule: Cell<Option<std::time::Instant>>,
     pub(super) search_settings: SearchSettings,
     pub(super) search_context: SearchContext,
-    pub(super) recent_button: gtk::MenuButton,
     pub(super) recent_list: gtk::ListBox,
     pub(super) recent_entries: RefCell<Vec<PathBuf>>,
-    pub(super) autosave_button: gtk::MenuButton,
     pub(super) autosave_options: Vec<(u64, &'static str)>,
     pub(super) preferences: PreferencesUi,
     pub(super) llm_manager: Arc<Mutex<LlmManager>>,
+    pub(super) model_downloader: ModelDownloader,
     pub(super) gpus: Vec<GpuDevice>,
     pub(super) paths: AppPaths,
     pub(super) settings: RefCell<Settings>,
@@ -684,6 +734,10 @@ pub(super) struct AppState {
 }
 
 impl AppState {
+    pub(super) fn window(&self) -> adw::ApplicationWindow {
+        self.window.upgrade().expect("Window should still be alive")
+    }
+
     fn initialize(self: &Rc<Self>) {
         self.update_title();
         self.update_cursor_label();
@@ -851,7 +905,7 @@ impl AppState {
     fn open_document_dialog(self: &Rc<Self>) {
         let dialog = gtk::FileChooserDialog::builder()
             .title("Open File")
-            .transient_for(&self.window)
+            .transient_for(&self.window())
             .modal(true)
             .action(gtk::FileChooserAction::Open)
             .build();
@@ -908,7 +962,7 @@ impl AppState {
     fn save_as_dialog(self: &Rc<Self>) {
         let dialog = gtk::FileChooserDialog::builder()
             .title("Save File As")
-            .transient_for(&self.window)
+            .transient_for(&self.window())
             .modal(true)
             .action(gtk::FileChooserAction::Save)
             .build();
@@ -949,7 +1003,7 @@ impl AppState {
     pub(super) fn update_title(&self) {
         let name = derive_display_name(&self.file_path.borrow());
         let marker = if self.buffer.is_modified() { "*" } else { "" };
-        self.window
+        self.window()
             .set_title(Some(&format!("Ghostpad — {name}{marker}")));
         self.status_label.set_text(&format!(
             "{}{}",
@@ -971,7 +1025,7 @@ impl AppState {
 
     pub(super) fn present_error(&self, heading: &str, body: &str) {
         let dialog = gtk::MessageDialog::builder()
-            .transient_for(&self.window)
+            .transient_for(&self.window())
             .modal(true)
             .buttons(gtk::ButtonsType::Ok)
             .text(heading)
@@ -982,8 +1036,8 @@ impl AppState {
     }
 
     fn persist_window_state(&self) {
-        let width = self.window.width();
-        let height = self.window.height();
+        let width = self.window().width();
+        let height = self.window().height();
         let mut store = self.window_state.borrow_mut();
         store.width = width.max(400);
         store.height = height.max(300);
@@ -1029,7 +1083,7 @@ impl AppState {
         }
         let weak = Rc::downgrade(self);
         let dialog = gtk::MessageDialog::builder()
-            .transient_for(&self.window)
+            .transient_for(&self.window())
             .modal(true)
             .text("File changed on disk")
             .secondary_text("The file was modified outside Ghostpad. Reload it?")
@@ -1092,7 +1146,7 @@ impl AppState {
         let proceed_cell: Rc<RefCell<Option<Box<dyn FnOnce(&Rc<Self>)>>>> =
             Rc::new(RefCell::new(Some(Box::new(proceed))));
         let dialog = gtk::MessageDialog::builder()
-            .transient_for(&self.window)
+            .transient_for(&self.window())
             .modal(true)
             .text("Unsaved changes")
             .secondary_text("Save your changes before continuing?")
@@ -1128,11 +1182,10 @@ impl AppState {
 
     fn show_goto_line_dialog(self: &Rc<Self>) {
         let dialog = gtk::Dialog::builder()
-            .transient_for(&self.window)
+            .transient_for(&self.window())
             .modal(true)
             .title("Go to Line")
             .build();
-        dialog.set_transient_for(Some(&self.window));
         dialog.add_button("Cancel", gtk::ResponseType::Cancel);
         dialog.add_button("Go", gtk::ResponseType::Accept);
         dialog.set_default_response(gtk::ResponseType::Accept);
@@ -1221,17 +1274,17 @@ impl AppState {
         self.preferences
             .llm_endpoint_row
             .set_visible(provider != ProviderKind::Local);
-        self.preferences.llm_endpoint_entry.set_text(&endpoint);
+        self.preferences.llm_endpoint_row.set_text(&endpoint);
         self.preferences
             .override_model_switch
             .set_active(override_model);
         self.preferences
-            .llm_model_entry
+            .llm_model_row
             .set_sensitive(override_model);
-        self.preferences.llm_model_entry.set_text(&model_path);
+        self.preferences.llm_model_row.set_text(&model_path);
         self.preferences.gpu_combo.set_selected(gpu_idx as u32);
-        self.preferences.gpu_model_entry.set_text(&gpu_model);
-        self.preferences.cpu_model_entry.set_text(&cpu_model);
+        self.preferences.gpu_model_row.set_text(&gpu_model);
+        self.preferences.cpu_model_row.set_text(&cpu_model);
         self.preferences
             .max_tokens_spin
             .set_value(max_tokens as f64);
@@ -1250,8 +1303,8 @@ impl AppState {
 
         let weak = Rc::downgrade(self);
         self.preferences
-            .llm_endpoint_entry
-            .connect_changed(move |entry| {
+            .llm_endpoint_row
+            .connect_changed(move |entry: &adw::EntryRow| {
                 if let Some(state) = weak.upgrade() {
                     state.update_llm_endpoint(entry.text().to_string());
                 }
@@ -1270,8 +1323,8 @@ impl AppState {
 
         let weak = Rc::downgrade(self);
         self.preferences
-            .llm_model_entry
-            .connect_changed(move |entry| {
+            .llm_model_row
+            .connect_changed(move |entry: &adw::EntryRow| {
                 if let Some(state) = weak.upgrade() {
                     state.update_llm_local_model(entry.text().to_string());
                 }
@@ -1289,8 +1342,8 @@ impl AppState {
 
         let weak = Rc::downgrade(self);
         self.preferences
-            .gpu_model_entry
-            .connect_changed(move |entry| {
+            .gpu_model_row
+            .connect_changed(move |entry: &adw::EntryRow| {
                 if let Some(state) = weak.upgrade() {
                     state.update_gpu_model(entry.text().to_string());
                 }
@@ -1298,8 +1351,8 @@ impl AppState {
 
         let weak = Rc::downgrade(self);
         self.preferences
-            .cpu_model_entry
-            .connect_changed(move |entry| {
+            .cpu_model_row
+            .connect_changed(move |entry: &adw::EntryRow| {
                 if let Some(state) = weak.upgrade() {
                     state.update_cpu_model(entry.text().to_string());
                 }
@@ -1310,7 +1363,7 @@ impl AppState {
             .gpu_download_button
             .connect_clicked(move |_| {
                 if let Some(state) = weak.upgrade() {
-                    let model_ref = state.preferences.gpu_model_entry.text().trim().to_string();
+                    let model_ref = state.preferences.gpu_model_row.text().trim().to_string();
                     if model_ref.is_empty() {
                         let toast = adw::Toast::new("Enter a GPU model reference before downloading.");
                         toast.set_timeout(6);
@@ -1326,7 +1379,7 @@ impl AppState {
             .cpu_download_button
             .connect_clicked(move |_| {
                 if let Some(state) = weak.upgrade() {
-                    let model_ref = state.preferences.cpu_model_entry.text().trim().to_string();
+                    let model_ref = state.preferences.cpu_model_row.text().trim().to_string();
                     if model_ref.is_empty() {
                         let toast = adw::Toast::new("Enter a CPU model reference before downloading.");
                         toast.set_timeout(6);
@@ -1344,6 +1397,23 @@ impl AppState {
                 if let Some(state) = weak.upgrade() {
                     let value = spin.value() as usize;
                     state.update_max_completion_tokens(value);
+                }
+            });
+
+        let weak = Rc::downgrade(self);
+        self.preferences
+            .reset_defaults_button
+            .connect_clicked(move |_| {
+                if let Some(state) = weak.upgrade() {
+                    let defaults = LlmSettings::default();
+                    // Updating text triggers the change signals which update settings
+                    state.preferences.gpu_model_row.set_text(&defaults.default_gpu_model);
+                    state.preferences.cpu_model_row.set_text(&defaults.default_cpu_model);
+                    state.preferences.max_tokens_spin.set_value(defaults.max_completion_tokens as f64);
+                    
+                    let toast = adw::Toast::new("LLM settings reset to defaults.");
+                    toast.set_timeout(3);
+                    state.toast_overlay.add_toast(toast);
                 }
             });
     }
@@ -1540,6 +1610,7 @@ impl AppState {
                 if state.manual_completion_inflight.get() {
                     return ControlFlow::Break;
                 }
+                eprintln!("[{:?}] Debouncer fired, calling LLM completion", std::time::SystemTime::now());
                 state.request_llm_completion_with_generation(
                     CompletionTrigger::Automatic,
                     generation,
@@ -1602,14 +1673,13 @@ impl AppState {
         }
         let suffix = buffer.text(&cursor_iter, &suffix_end, true).to_string();
 
-        // Format as FIM prompt for Qwen models
-        // Format: <|fim_prefix|>PREFIX<|fim_suffix|>SUFFIX<|fim_middle|>
+        // Format as FIM prompt (DeepSeek Coder style)
+        // Format: <｜fim begin｜>PREFIX<｜fim hole｜>SUFFIX<｜fim end｜>
         if suffix.is_empty() {
             // No suffix - just return prefix (end of document)
             prefix
         } else {
-            // FIM format with both prefix and suffix
-            format!("<|fim_prefix|>{}<|fim_suffix|>{}<|fim_middle|>", prefix, suffix)
+            format!("<｜fim begin｜>{}<｜fim hole｜>{}<｜fim end｜>", prefix, suffix)
         }
     }
 
@@ -1679,7 +1749,7 @@ impl AppState {
 
     fn show_llm_setup_dialog(self: &Rc<Self>, readiness: LlmReadiness) {
         let dialog = gtk::Dialog::builder()
-            .transient_for(&self.window)
+            .transient_for(&self.window())
             .modal(true)
             .title("LLM Setup")
             .build();
@@ -1794,15 +1864,7 @@ impl AppState {
             Finished(anyhow::Result<PathBuf>),
         }
 
-        let downloader = match self.lock_llm_manager() {
-            Some(manager) => manager.downloader_handle(),
-            None => {
-                self.hide_download_banner();
-                self.status_label
-                    .set_text("LLM manager unavailable; aborting download");
-                return;
-            }
-        };
+        let downloader = self.model_downloader.clone();
         let (sender, receiver) = mpsc::channel::<DownloadMsg>();
 
         std::thread::spawn(move || {
@@ -1814,7 +1876,7 @@ impl AppState {
         });
 
         let weak = Rc::downgrade(self);
-        glib::idle_add_local(move || match receiver.try_recv() {
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || match receiver.try_recv() {
             Ok(DownloadMsg::Progress(progress)) => {
                 if let Some(state) = weak.upgrade() {
                     state.update_download_progress(progress);
@@ -1888,10 +1950,15 @@ impl AppState {
     }
 
     fn lock_llm_manager(&self) -> Option<MutexGuard<'_, LlmManager>> {
-        match self.llm_manager.lock() {
+        // Use try_lock to avoid blocking the main thread if the model is loading
+        match self.llm_manager.try_lock() {
             Ok(guard) => Some(guard),
-            Err(err) => {
-                log::error!("Failed to lock LLM manager: {err}");
+            Err(std::sync::TryLockError::WouldBlock) => {
+                log::warn!("LLM manager is busy (likely loading model), try again later");
+                None
+            }
+            Err(std::sync::TryLockError::Poisoned(err)) => {
+                log::error!("LLM manager mutex poisoned: {err}");
                 None
             }
         }

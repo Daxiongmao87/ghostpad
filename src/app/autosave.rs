@@ -70,13 +70,10 @@ impl AppState {
         }
         let interval = self.settings.borrow().autosave_interval_secs;
         if interval == 0 {
-            self.autosave_label.set_text("Autosave: Off");
-            self.autosave_button.set_label("Autosave: Off");
+            // Autosave disabled
             return;
         }
-        let desc = self.autosave_description(interval);
-        self.autosave_label.set_text(&format!("Autosave: {desc}"));
-        self.autosave_button.set_label(&format!("Autosave: {desc}"));
+        // Label removed from status bar, but logic continues
         let weak = Rc::downgrade(self);
         let id = glib::timeout_add_seconds_local(interval as u32, move || {
             if let Some(state) = weak.upgrade() {
@@ -96,18 +93,17 @@ impl AppState {
         if self.settings.borrow().autosave_idle_only {
             if let Some(last) = *self.last_edit.borrow() {
                 if last.elapsed() < Duration::from_secs(AUTOSAVE_IDLE_GRACE_SECS) {
-                    self.autosave_label.set_text("Autosave waiting for idle");
+                    // Waiting for idle
                     return;
                 }
             }
         }
         match self.write_autosave_file() {
-            Ok(timestamp) => self
-                .autosave_label
-                .set_text(&format!("Autosave @ {}", timestamp)),
+            Ok(_timestamp) => {
+                // Autosave success
+            },
             Err(err) => {
                 log::warn!("Autosave error: {err:?}");
-                self.autosave_label.set_text("Autosave error");
             }
         }
     }
@@ -197,7 +193,7 @@ impl AppState {
     pub(super) fn prompt_custom_autosave(self: &Rc<Self>) {
         let dialog = gtk::Dialog::builder()
             .title("Custom Autosave Interval")
-            .transient_for(&self.window)
+            .transient_for(&self.window())
             .modal(true)
             .build();
         dialog.add_button("Cancel", gtk::ResponseType::Cancel);

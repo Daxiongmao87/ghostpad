@@ -150,6 +150,6 @@ impl AppState {
 
     pub(super) fn hide_search_panel(&self) {
         self.search_revealer.set_reveal_child(false);
-        self.window.grab_focus();
+        self.window().grab_focus();
     }
 }

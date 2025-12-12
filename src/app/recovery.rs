@@ -80,7 +80,7 @@ impl AppState {
         };
         let description = entry.metadata.description();
         let dialog = gtk::MessageDialog::builder()
-            .transient_for(&self.window)
+            .transient_for(&self.window())
             .modal(true)
             .text("Recovered autosave found")
             .secondary_text(&description)
@@ -111,7 +111,7 @@ impl AppState {
                 } else {
                     self.file_path.replace(None);
                 }
-                self.update_title();
+                self.window().grab_focus();
                 self.last_edit.replace(Some(Instant::now()));
                 self.show_toast("Recovered autosave applied");
             }

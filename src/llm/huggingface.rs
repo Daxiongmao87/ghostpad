@@ -504,13 +504,13 @@ mod tests {
     #[test]
     fn test_parse_explicit_filename() {
         let reference =
-            "mradermacher/Luau-Qwen3-4B-FIM-v0.1-i1-GGUF:Luau-Qwen3-4B-FIM-v0.1.i1-Q4_K_M.gguf";
+            "TheBloke/deepseek-coder-1.3b-instruct-GGUF:deepseek-coder-1.3b-instruct.Q4_K_M.gguf";
         let model = HuggingFaceModel::parse(reference).unwrap();
-        assert_eq!(model.repo, "mradermacher/Luau-Qwen3-4B-FIM-v0.1-i1-GGUF");
-        assert_eq!(model.file, "Luau-Qwen3-4B-FIM-v0.1.i1-Q4_K_M.gguf");
+        assert_eq!(model.repo, "TheBloke/deepseek-coder-1.3b-instruct-GGUF");
+        assert_eq!(model.file, "deepseek-coder-1.3b-instruct.Q4_K_M.gguf");
         assert_eq!(
             model.download_url(),
-            "https://huggingface.co/mradermacher/Luau-Qwen3-4B-FIM-v0.1-i1-GGUF/resolve/main/Luau-Qwen3-4B-FIM-v0.1.i1-Q4_K_M.gguf?download=1"
+            "https://huggingface.co/TheBloke/deepseek-coder-1.3b-instruct-GGUF/resolve/main/deepseek-coder-1.3b-instruct.Q4_K_M.gguf?download=1"
         );
     }
 

@@ -1,4 +1,4 @@
-use gtk4::{self as gtk};
+use gtk4::{self as gtk, glib};
 use libadwaita::prelude::*;
 use libadwaita::{self as adw};
 
@@ -10,15 +10,15 @@ pub(super) struct PreferencesUi {
     pub autosave_combo: adw::ComboRow,
     pub autosave_idle_switch: gtk::Switch,
     pub llm_provider_combo: adw::ComboRow,
-    pub llm_endpoint_row: adw::ActionRow,
-    pub llm_endpoint_entry: gtk::Entry,
+    pub llm_endpoint_row: adw::EntryRow,
     pub override_model_switch: gtk::Switch,
-    pub llm_model_entry: gtk::Entry,
+    pub llm_model_row: adw::EntryRow,
     pub gpu_combo: adw::ComboRow,
-    pub gpu_model_entry: gtk::Entry,
+    pub gpu_model_row: adw::EntryRow,
     pub gpu_download_button: gtk::Button,
-    pub cpu_model_entry: gtk::Entry,
+    pub cpu_model_row: adw::EntryRow,
     pub cpu_download_button: gtk::Button,
+    pub reset_defaults_button: gtk::Button,
     pub max_tokens_spin: gtk::SpinButton,
     pub whitespace_switch: gtk::Switch,
     pub wrap_switch: gtk::Switch,
@@ -33,7 +33,7 @@ pub(super) fn build_preferences(
     let labels: Vec<&str> = autosave_options.iter().map(|(_, label)| *label).collect();
     let string_list = gtk::StringList::new(labels.as_slice());
 
-    let autosave_combo = adw::ComboRow::builder().title("Autosave frequency").build();
+    let autosave_combo = adw::ComboRow::builder().title("Frequence").build();
     autosave_combo.set_model(Some(&string_list));
     let initial_index = autosave_options
         .iter()
@@ -46,20 +46,22 @@ pub(super) fn build_preferences(
         .active(settings.autosave_idle_only)
         .build();
     let autosave_idle_row = adw::ActionRow::builder()
-        .title("Only autosave when idle")
-        .subtitle("Skip background saves while you are actively typing")
+        .title("Idle Only")
+        .subtitle("Pause autosave while typing")
         .build();
     autosave_idle_row.add_suffix(&autosave_idle_switch);
     autosave_idle_row.set_activatable_widget(Some(&autosave_idle_switch));
 
     let autosave_group = adw::PreferencesGroup::builder()
-        .title("Autosave")
-        .description("Configure automatic save cadence and behavior.")
+        .title("Behavior")
         .build();
     autosave_group.add(&autosave_combo);
     autosave_group.add(&autosave_idle_row);
 
-    let autosave_page = adw::PreferencesPage::builder().title("Autosave").build();
+    let autosave_page = adw::PreferencesPage::builder()
+        .title("Autosave")
+        .icon_name("document-save-symbolic")
+        .build();
     autosave_page.add(&autosave_group);
 
     let (editor_page, whitespace_switch, wrap_switch) = build_editor_page(settings);
@@ -67,43 +69,43 @@ pub(super) fn build_preferences(
         llm_page,
         llm_provider_combo,
         llm_endpoint_row,
-        llm_endpoint_entry,
         override_model_switch,
-        llm_model_entry,
+        llm_model_row,
         gpu_combo,
-        gpu_model_entry,
+        gpu_model_row,
         gpu_download_button,
-        cpu_model_entry,
+        cpu_model_row,
         cpu_download_button,
+        reset_defaults_button,
         max_tokens_spin,
     ) = build_llm_page(&settings.llm, gpus);
     let theming_page = build_theming_page();
-    let shortcuts_page = build_shortcuts_page();
+    // Shortcuts page removed for now as it was empty/placeholder
 
     let window = adw::PreferencesWindow::builder()
         .title("Preferences")
         .transient_for(parent)
         .modal(true)
         .build();
-    window.add(&autosave_page);
     window.add(&editor_page);
+    window.add(&autosave_page);
     window.add(&llm_page);
     window.add(&theming_page);
-    window.add(&shortcuts_page);
+    
     PreferencesUi {
         window,
         autosave_combo,
         autosave_idle_switch,
         llm_provider_combo,
         llm_endpoint_row,
-        llm_endpoint_entry,
         override_model_switch,
-        llm_model_entry,
+        llm_model_row,
         gpu_combo,
-        gpu_model_entry,
+        gpu_model_row,
         gpu_download_button,
-        cpu_model_entry,
+        cpu_model_row,
         cpu_download_button,
+        reset_defaults_button,
         max_tokens_spin,
         whitespace_switch,
         wrap_switch,
@@ -111,22 +113,24 @@ pub(super) fn build_preferences(
 }
 
 fn build_editor_page(settings: &Settings) -> (adw::PreferencesPage, gtk::Switch, gtk::Switch) {
-    let page = adw::PreferencesPage::builder().title("Editor").build();
+    let page = adw::PreferencesPage::builder()
+        .title("Editor")
+        .icon_name("accessories-text-editor-symbolic")
+        .build();
     let group = adw::PreferencesGroup::builder()
-        .title("Editor basics")
-        .description("Configure text display and behavior.")
+        .title("Appearance")
         .build();
 
+    // Font selection (simplified placeholder for now, ideally GtkFontDialog)
     let font_row = adw::ActionRow::builder()
         .title("Font")
-        .subtitle("System default (click to change)")
+        .subtitle("System default")
         .build();
-    font_row.add_suffix(&gtk::Button::with_label("Select…"));
+    font_row.add_suffix(&gtk::Button::with_label("Select…")); // Keeping simple for now
     group.add(&font_row);
 
     let whitespace_row = adw::ActionRow::builder()
-        .title("Show whitespace")
-        .subtitle("Display tabs/spaces as faint markers")
+        .title("Show Whitespace")
         .build();
     let whitespace_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
@@ -137,8 +141,7 @@ fn build_editor_page(settings: &Settings) -> (adw::PreferencesPage, gtk::Switch,
     group.add(&whitespace_row);
 
     let wrap_row = adw::ActionRow::builder()
-        .title("Soft wrap lines")
-        .subtitle("Wrap long lines to the view width")
+        .title("Soft Wrap")
         .build();
     let wrap_switch = gtk::Switch::builder()
         .valign(gtk::Align::Center)
@@ -158,48 +161,46 @@ fn build_llm_page(
 ) -> (
     adw::PreferencesPage,
     adw::ComboRow,
-    adw::ActionRow,
-    gtk::Entry,
+    adw::EntryRow,
     gtk::Switch,
-    gtk::Entry,
+    adw::EntryRow,
     adw::ComboRow,
-    gtk::Entry,
+    adw::EntryRow,
     gtk::Button,
-    gtk::Entry,
+    adw::EntryRow,
+    gtk::Button,
     gtk::Button,
     gtk::SpinButton,
 ) {
-    let page = adw::PreferencesPage::builder().title("LLM").build();
+    let page = adw::PreferencesPage::builder()
+        .title("AI Assistant")
+        .icon_name("sparkles-symbolic")
+        .build();
 
     let provider_group = adw::PreferencesGroup::builder()
-        .title("Providers")
-        .description("Select which completion backend Ghostpad uses.")
+        .title("Provider")
+        .description("Choose your completion backend.")
         .build();
 
     let provider_names: Vec<&'static str> = PROVIDERS.iter().map(|(_, name)| *name).collect();
     let provider_list = gtk::StringList::new(provider_names.as_slice());
     let provider_row = adw::ComboRow::builder()
-        .title("Completion provider")
+        .title("Service")
         .model(&provider_list)
         .selected(provider_index(&llm.provider) as u32)
         .build();
     provider_group.add(&provider_row);
 
-    let endpoint_row = adw::ActionRow::builder()
+    let endpoint_row = adw::EntryRow::builder()
         .title("Endpoint URL")
-        .subtitle("https://api.openai.com/v1")
-        .build();
-    let endpoint_entry = gtk::Entry::builder()
-        .hexpand(true)
         .text(&llm.endpoint)
         .build();
-    endpoint_row.add_suffix(&endpoint_entry);
     endpoint_row.set_visible(llm.provider != ProviderKind::Local);
     provider_group.add(&endpoint_row);
 
     let local_group = adw::PreferencesGroup::builder()
-        .title("Local models")
-        .description("Configure llama.cpp paths when using local inference.")
+        .title("Local Inference")
+        .description("Configure onboard GGUF models.")
         .build();
 
     let override_model_switch = gtk::Switch::builder()
@@ -207,24 +208,26 @@ fn build_llm_page(
         .active(llm.override_model_path)
         .build();
     let override_model_row = adw::ActionRow::builder()
-        .title("Override model path")
-        .subtitle("Manually specify a GGUF file instead of using defaults")
+        .title("Custom Model Path")
+        .subtitle("Use a specific .gguf file instead of defaults")
         .build();
     override_model_row.add_suffix(&override_model_switch);
     override_model_row.set_activatable_widget(Some(&override_model_switch));
     local_group.add(&override_model_row);
 
-    let model_row = adw::ActionRow::builder()
-        .title("Model path")
-        .subtitle("GGUF file on disk")
-        .build();
-    let model_entry = gtk::Entry::builder()
-        .hexpand(true)
+    let llm_model_row = adw::EntryRow::builder()
+        .title("File Path")
         .text(&llm.local_model_path)
-        .sensitive(llm.override_model_path)
         .build();
-    model_row.add_suffix(&model_entry);
-    local_group.add(&model_row);
+    // Only show direct file path entry if override is enabled
+    // Note: binding visibility is done in window.rs usually, but we set initial state here
+    llm_model_row.set_sensitive(llm.override_model_path);
+    local_group.add(&llm_model_row);
+
+    // Hardware Acceleration
+    let device_group = adw::PreferencesGroup::builder()
+        .title("Hardware")
+        .build();
 
     let gpu_names: Vec<String> = std::iter::once("CPU Only".to_string())
         .chain(gpus.iter().map(|g| g.name.clone()))
@@ -233,8 +236,7 @@ fn build_llm_page(
     let gpu_list = gtk::StringList::new(gpu_strings.as_slice());
 
     let gpu_combo = adw::ComboRow::builder()
-        .title("Preferred device")
-        .subtitle("Select GPU or CPU-only inference")
+        .title("Accelerator")
         .model(&gpu_list)
         .build();
 
@@ -243,99 +245,93 @@ fn build_llm_page(
     } else if let Some(ref device) = llm.preferred_device {
         gpus.iter()
             .position(|g| &g.id == device)
-            .map(|i| i + 1)
+            .map(|i| i + 1) // +1 for CPU offset
             .unwrap_or(0)
     } else {
         0
     };
     gpu_combo.set_selected(selected_idx as u32);
-    local_group.add(&gpu_combo);
+    device_group.add(&gpu_combo);
 
-    let gpu_model_row = adw::ActionRow::builder()
-        .title("GPU model")
-        .subtitle("Default GGUF for GPU inference")
-        .build();
-    let gpu_model_entry = gtk::Entry::builder()
-        .hexpand(true)
+    let gpu_model_row = adw::EntryRow::builder()
+        .title("GPU Model")
         .text(&llm.default_gpu_model)
         .build();
-    let gpu_download_button = gtk::Button::with_label("Download");
-    gpu_model_row.add_suffix(&gpu_model_entry);
-    gpu_model_row.add_suffix(&gpu_download_button);
-    gpu_model_row.set_activatable_widget(Some(&gpu_download_button));
-    local_group.add(&gpu_model_row);
-
-    let cpu_model_row = adw::ActionRow::builder()
-        .title("CPU model")
-        .subtitle("Default GGUF for CPU-only inference")
+    let gpu_download_button = gtk::Button::builder()
+        .icon_name("folder-download-symbolic")
+        .valign(gtk::Align::Center)
+        .tooltip_text("Download default model")
+        .css_classes(["flat"]) 
         .build();
-    let cpu_model_entry = gtk::Entry::builder()
-        .hexpand(true)
+    gpu_model_row.add_suffix(&gpu_download_button);
+    device_group.add(&gpu_model_row);
+
+    let cpu_model_row = adw::EntryRow::builder()
+        .title("CPU Model")
         .text(&llm.default_cpu_model)
         .build();
-    let cpu_download_button = gtk::Button::with_label("Download");
-    cpu_model_row.add_suffix(&cpu_model_entry);
+    let cpu_download_button = gtk::Button::builder()
+        .icon_name("folder-download-symbolic")
+        .valign(gtk::Align::Center)
+        .tooltip_text("Download default model")
+        .css_classes(["flat"])
+        .build();
     cpu_model_row.add_suffix(&cpu_download_button);
-    cpu_model_row.set_activatable_widget(Some(&cpu_download_button));
-    local_group.add(&cpu_model_row);
+    device_group.add(&cpu_model_row);
+    
+    let reset_defaults_button = gtk::Button::builder()
+        .label("Reset to Defaults")
+        .margin_top(12)
+        .margin_bottom(12)
+        .css_classes(["flat"])
+        .build();
+    local_group.add(&reset_defaults_button);
 
+    local_group.add(&device_group);
+
+    let advanced_group = adw::PreferencesGroup::builder()
+        .title("Generation")
+        .build();
+    
     let max_tokens_row = adw::ActionRow::builder()
-        .title("Max completion tokens")
-        .subtitle("Maximum tokens to generate for each completion")
+        .title("Max Tokens")
         .build();
     let max_tokens_spin = gtk::SpinButton::builder()
         .adjustment(&gtk::Adjustment::new(
             llm.max_completion_tokens as f64,
-            1.0,
-            512.0,
-            1.0,
-            10.0,
-            0.0,
+            1.0, 512.0, 1.0, 10.0, 0.0,
         ))
         .valign(gtk::Align::Center)
         .build();
     max_tokens_row.add_suffix(&max_tokens_spin);
-    local_group.add(&max_tokens_row);
-
-    let credentials_group = adw::PreferencesGroup::builder()
-        .title("Credentials")
-        .description("Tokens are stored via libsecret/KWallet (coming soon)")
+    advanced_group.add(&max_tokens_row);
+    
+    // Credentials
+    let secrets_group = adw::PreferencesGroup::builder()
+        .title("Security")
         .build();
-    let token_row = adw::ActionRow::builder()
-        .title("API token")
-        .subtitle("Not stored in config yet")
+    let token_row = adw::PasswordEntryRow::builder()
+        .title("API Key")
         .build();
-    let token_entry = gtk::Entry::builder()
-        .visibility(false)
-        .hexpand(true)
-        .build();
-    token_row.add_suffix(&token_entry);
-    credentials_group.add(&token_row);
-
-    let test_row = adw::ActionRow::builder()
-        .title("Connection test")
-        .subtitle("Send a short verify request")
-        .build();
-    let test_button = gtk::Button::with_label("Test");
-    test_row.add_suffix(&test_button);
-    test_row.set_activatable_widget(Some(&test_button));
-    credentials_group.add(&test_row);
+    secrets_group.add(&token_row);
 
     page.add(&provider_group);
     page.add(&local_group);
-    page.add(&credentials_group);
+    page.add(&advanced_group);
+    page.add(&secrets_group);
+
     (
         page,
         provider_row,
         endpoint_row,
-        endpoint_entry,
         override_model_switch,
-        model_entry,
+        llm_model_row,
         gpu_combo,
-        gpu_model_entry,
+        gpu_model_row,
         gpu_download_button,
-        cpu_model_entry,
+        cpu_model_row,
         cpu_download_button,
+        reset_defaults_button,
         max_tokens_spin,
     )
 }
@@ -343,7 +339,7 @@ fn build_llm_page(
 const PROVIDERS: &[(ProviderKind, &str)] = &[
     (ProviderKind::OpenAI, "OpenAI"),
     (ProviderKind::Gemini, "Gemini"),
-    (ProviderKind::Local, "Local llama.cpp"),
+    (ProviderKind::Local, "Local (llama.cpp)"),
 ];
 
 pub(super) fn provider_index(kind: &ProviderKind) -> usize {
@@ -358,47 +354,22 @@ pub(super) fn provider_from_index(idx: u32) -> ProviderKind {
 }
 
 fn build_theming_page() -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder().title("Theming").build();
-    let group = adw::PreferencesGroup::builder()
+    let page = adw::PreferencesPage::builder()
         .title("Appearance")
-        .description("Follow system defaults; overrides coming soon.")
+        .icon_name("preferences-desktop-theme-symbolic")
+        .build();
+    let group = adw::PreferencesGroup::builder()
+        .title("Style")
         .build();
     let theme_switch = gtk::Switch::builder().valign(gtk::Align::Center).build();
     let theme_row = adw::ActionRow::builder()
-        .title("Follow system color scheme")
-        .subtitle("Automatically mirror light/dark setting")
+        .title("System Code Scheme")
+        .subtitle("Inherit light/dark preference")
         .build();
     theme_row.add_suffix(&theme_switch);
     theme_row.set_activatable_widget(Some(&theme_switch));
     group.add(&theme_row);
 
-    let contrast_switch = gtk::Switch::builder().valign(gtk::Align::Center).build();
-    let contrast_row = adw::ActionRow::builder()
-        .title("High contrast mode")
-        .subtitle("Increase contrast for accessibility")
-        .build();
-    contrast_row.add_suffix(&contrast_switch);
-    contrast_row.set_activatable_widget(Some(&contrast_switch));
-    group.add(&contrast_row);
-    page.add(&group);
-    page
-}
-
-fn build_shortcuts_page() -> adw::PreferencesPage {
-    let page = adw::PreferencesPage::builder().title("Shortcuts").build();
-    let group = adw::PreferencesGroup::builder()
-        .title("Keyboard bindings")
-        .description("Import/export planned for later milestone.")
-        .build();
-    let selector = adw::ActionRow::builder()
-        .title("Shortcut presets")
-        .subtitle("Default (customization coming soon)")
-        .build();
-    let import_button = gtk::Button::with_label("Import…");
-    let export_button = gtk::Button::with_label("Export…");
-    selector.add_suffix(&import_button);
-    selector.add_suffix(&export_button);
-    group.add(&selector);
     page.add(&group);
     page
 }

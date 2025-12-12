@@ -80,9 +80,11 @@ impl AppState {
                     return Err(anyhow::anyhow!("Request cancelled (generation mismatch)"));
                 }
 
+                eprintln!("[{:?}] Attempting to acquire LLM manager lock...", std::time::SystemTime::now());
                 let manager = llm_manager.lock().map_err(|e| {
                     anyhow::anyhow!("Failed to lock LLM manager: {}", e)
                 })?;
+                eprintln!("[{:?}] LLM manager lock acquired", std::time::SystemTime::now());
 
                 // Double-check after acquiring lock (in case it changed while waiting)
                 if generation != completion_generation.get() {
@@ -137,7 +139,8 @@ impl AppState {
                                     state.status_label.set_text("Suggestion ready (Tab to accept, Esc to dismiss)");
                                 } else {
                                     log::info!("Completion was empty");
-                                    state.status_label.set_text("No completion generated");
+                                    // Don't annoy user with "No completion generated"
+                                    state.status_label.set_text("");
                                 }
                             }
                             Err(err) => {
@@ -216,13 +219,17 @@ impl AppState {
         let spinner = self.llm_spinner.clone();
         let status_label = self.llm_status_label.clone();
         let weak_for_trigger = Rc::downgrade(self);
-        gtk4::glib::idle_add_local(move || {
+        
+        log::info!("Starting idle poller for LLM preload...");
+        gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
             if weak_for_trigger.upgrade().is_none() {
+                log::warn!("AppState dropped, stopping LLM preload poller");
                 return gtk4::glib::ControlFlow::Break;
             }
 
             match rx.try_recv() {
                 Ok(result) => {
+                    log::info!("Received LLM preload result");
                     // Stop and hide spinner
                     spinner.stop();
                     spinner.hide();
@@ -258,9 +265,11 @@ impl AppState {
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
                     // Not ready yet, keep polling
+                    // log::trace!("LLM preload still running...");
                     gtk4::glib::ControlFlow::Continue
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    log::error!("LLM preload thread channel disconnected!");
                     // Thread died unexpectedly
                     spinner.stop();
                     spinner.hide();
