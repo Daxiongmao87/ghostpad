@@ -164,12 +164,12 @@ impl LlmManager {
         {
             let lock = self.loaded_model.lock().unwrap();
             if lock.is_some() {
-                eprintln!("[ensure_model_loaded] Model already loaded, skipping path resolution (fast path)");
+
                 return Ok(());
             }
         }
 
-        eprintln!("[ensure_model_loaded] No model loaded, resolving path (this may be slow)...");
+        log::debug!("No model loaded, resolving path...");
 
         // Determine which model to use (this may involve network requests for HF alias resolution)
         let model_path =
@@ -194,26 +194,24 @@ impl LlmManager {
                 }
             };
 
-        eprintln!("[ensure_model_loaded] Path resolved: {:?}", model_path);
+
 
         // Now check if a model is loaded and if we need to reload (e.g., different path)
         {
             let mut lock = self.loaded_model.lock().unwrap();
             if let Some(loaded) = lock.as_ref() {
-                eprintln!("[ensure_model_loaded] Checking loaded model path...");
-                eprintln!("[ensure_model_loaded] Current path: {:?}", loaded.source_path);
-                eprintln!("[ensure_model_loaded] Requested path: {:?}", model_path);
+
                 if loaded.source_path == model_path {
-                    eprintln!("[ensure_model_loaded] Path matches, returning early");
+
                     return Ok(());
                 } else {
                     log::info!("Loaded model path mismatch (current: {:?}, requested: {:?}), reloading...", loaded.source_path, model_path);
-                    eprintln!("[ensure_model_loaded] Path MISMATCH, will reload");
+
                     // Drop the mismatched model to free memory BEFORE loading the new one
                     // This prevents OOM (Killed) when holding two models in memory
                 }
             } else {
-                eprintln!("[ensure_model_loaded] No model currently loaded, will load");
+
             }
             // Explicitly set to None to drop the Arc<LoadedModel>
             *lock = None;
@@ -257,12 +255,12 @@ impl LlmManager {
 
     /// Run inference with the configured model
     pub fn complete(&self, prompt: &str, max_tokens: usize) -> anyhow::Result<String> {
-        eprintln!("[{:?}] LlmManager::complete() called", std::time::SystemTime::now());
+
         
         // Ensure model is loaded
-        eprintln!("[{:?}] Calling ensure_model_loaded()...", std::time::SystemTime::now());
+
         self.ensure_model_loaded()?;
-        eprintln!("[{:?}] ensure_model_loaded() complete", std::time::SystemTime::now());
+
 
         // Get the loaded model
         let model_lock = self.loaded_model.lock().unwrap();
@@ -271,7 +269,7 @@ impl LlmManager {
             .ok_or_else(|| anyhow::anyhow!("Model not loaded"))?;
 
         // Run inference
-        eprintln!("[{:?}] Calling model.complete()...", std::time::SystemTime::now());
+
         model.complete(prompt, max_tokens, 0.7)
     }
 

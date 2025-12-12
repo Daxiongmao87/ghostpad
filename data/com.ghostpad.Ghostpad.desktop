@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Ghostpad
+GenericName=Text Editor
+Comment=Lightweight text editor with AI-powered autocomplete
+Exec=ghostpad %F
+Icon=com.ghostpad.Ghostpad
+Terminal=false
+Type=Application
+Categories=Utility;TextEditor;GTK;
+Keywords=text;editor;notepad;ai;llm;autocomplete;
+MimeType=text/plain;text/x-csrc;text/x-chdr;text/x-c++src;text/x-c++hdr;text/x-java;text/x-python;text/x-shellscript;text/x-script.python;application/x-shellscript;text/markdown;
+StartupNotify=true
+StartupWMClass=com.ghostpad.Ghostpad

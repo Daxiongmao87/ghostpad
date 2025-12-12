@@ -5,7 +5,6 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel, Special};
 use llama_cpp_2::sampling::LlamaSampler;
-use llama_cpp_2::token::LlamaToken;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -73,32 +72,6 @@ pub struct LoadedModel {
 impl LoadedModel {
     /// Run inference with the loaded model
     pub fn complete(&self, prompt: &str, max_tokens: usize, temperature: f32) -> Result<String> {
-        // Start heartbeat thread to track execution
-        let heartbeat_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let heartbeat_flag = heartbeat_running.clone();
-        let heartbeat_thread = std::thread::spawn(move || {
-            eprintln!("[HEARTBEAT] Thread started, will print every 2 seconds...");
-            let mut count = 0;
-            while heartbeat_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                if heartbeat_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    count += 2;
-                    eprintln!("[HEARTBEAT] LLM still running after {}s...", count);
-                }
-            }
-            eprintln!("[HEARTBEAT] Thread stopping...");
-        });
-
-        let result = self.complete_inner(prompt, max_tokens, temperature);
-        
-        // Stop heartbeat
-        heartbeat_running.store(false, std::sync::atomic::Ordering::Relaxed);
-        let _ = heartbeat_thread.join();
-        
-        result
-    }
-
-    fn complete_inner(&self, prompt: &str, max_tokens: usize, temperature: f32) -> Result<String> {
         // Create context
         let ctx_params = LlamaContextParams::default().with_n_ctx(std::num::NonZeroU32::new(2048));
 
@@ -107,50 +80,13 @@ impl LoadedModel {
             .new_context(&self.backend, ctx_params)
             .map_err(|e| anyhow!("Failed to create context: {:?}", e))?;
 
-        // Log if this is a FIM prompt
-        // DeepSeek uses <｜fim▁begin｜> format (U+2581 character, not space)
-        let is_fim = prompt.contains("<｜fim▁begin｜>") || prompt.contains("<|fim_prefix|>");
-        if is_fim {
-            eprintln!("=== FIM COMPLETION REQUEST ===");
-            eprintln!("FIM prompt detected");
-            // Log first 200 chars of prompt for debugging
-            let preview: String = prompt.chars().take(200).collect();
-            eprintln!("Prompt preview: {:?}", preview);
-        } else {
-             eprintln!("=== STANDARD COMPLETION REQUEST (No FIM markers) ===");
-        }
-        
-        // llama-cpp-2's str_to_token already has parse_special=true hardcoded,
-        // so special tokens like <|fim_prefix|> will be parsed correctly
+        // Tokenize prompt - llama-cpp-2's str_to_token has parse_special=true,
+        // so special tokens like FIM markers will be parsed correctly
         let tokens = self.model
             .str_to_token(prompt, AddBos::Always)
             .map_err(|e| anyhow!("Failed to tokenize prompt: {:?}", e))?;
 
-        eprintln!("Tokenized prompt into {} tokens", tokens.len());
-        
-        // Check BOS
-        let bos = self.model.token_bos();
-        eprintln!("Model BOS token: {:?}", bos);
-        
-        // Log first few tokens to see if special tokens are being parsed correctly
-        if tokens.len() > 0 {
-            let first_tokens: Vec<_> = tokens.iter().take(10).collect();
-            eprintln!("First 10 tokens: {:?}", first_tokens);
-            
-            if tokens[0] != bos {
-                eprintln!("WARNING: First token is NOT BOS! Expected {:?}, got {:?}", bos, tokens[0]);
-            }
-
-            // Try to decode first few tokens to see what they represent
-            for (i, token) in tokens.iter().take(5).enumerate() {
-                if let Ok(s) = self.model.token_to_str(*token, Special::Tokenize) {
-                    eprintln!("Token {}: {:?} -> {:?}", i, token, s);
-                }
-            }
-        }
-
         if tokens.is_empty() {
-             eprintln!("ERROR: Tokenization resulted in empty token sequence");
             return Err(anyhow!("Tokenization resulted in empty token sequence"));
         }
 
@@ -176,10 +112,8 @@ impl LoadedModel {
         }
 
         // Process the prompt
-        eprintln!("Starting prompt decode with {} tokens...", n_prompt);
         ctx.decode(&mut batch)
             .map_err(|e| anyhow!("Failed to decode prompt: {:?}", e))?;
-        eprintln!("Prompt decode complete, starting generation...");
 
         // Generate tokens
         let mut result = String::new();
@@ -188,32 +122,19 @@ impl LoadedModel {
 
         let mut sampler =
             LlamaSampler::chain_simple([LlamaSampler::temp(temperature), LlamaSampler::greedy()]);
-        
-        eprintln!("Generation loop: n_cur={}, n_max={}", n_cur, n_max);
-        let gen_start = std::time::Instant::now();
 
         while n_cur < n_max {
-            let token_start = std::time::Instant::now();
-            
-            // Sample next token directly
+            // Sample next token
             let logits_index = batch.n_tokens() - 1;
             let new_token_id = sampler.sample(&ctx, logits_index);
             sampler.accept(new_token_id);
 
-            // Logging for debugging - show time per token
-            if let Ok(s) = self.model.token_to_str(new_token_id, Special::Tokenize) {
-                eprintln!("Generated token: {:?} -> {:?} ({}ms)", new_token_id, s, token_start.elapsed().as_millis());
-            }
-
             // Check for EOS
             if self.model.is_eog_token(new_token_id) {
-                if is_fim {
-                     eprintln!("EOS token detected, stopping generation");
-                }
                 break;
             }
 
-            // Use Tokenize to handle special tokens (like FIM sentinels) if Plaintext fails
+            // Decode token to string
             let piece = match self.model.token_to_str(new_token_id, Special::Tokenize) {
                 Ok(s) => s,
                 Err(e) => {
@@ -243,7 +164,7 @@ impl LoadedModel {
             n_cur += 1;
         }
 
-        eprintln!("[{:?}] Generation complete, {} tokens generated", std::time::SystemTime::now(), n_cur - n_prompt);
+        log::debug!("Generated {} tokens", n_cur - n_prompt);
         Ok(result)
     }
 }

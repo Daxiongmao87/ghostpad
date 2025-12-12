@@ -1578,14 +1578,13 @@ impl AppState {
         // Don't trigger on deletions (current < last) or replacements (current == last)
         if current_count <= last_count {
             // User deleted text or replaced - don't trigger auto-completion
-            eprintln!("[handle_text_change] Char count: {} -> {} (not an insertion, skipping)", last_count, current_count);
             self.cancel_completion_debounce();
             self.manual_completion_inflight.set(false);
             self.with_suppressed_completion(|| self.document.dismiss_ghost_text());
             return;
         }
         
-        eprintln!("[handle_text_change] Char count: {} -> {} (insertion, scheduling)", last_count, current_count);
+
 
         self.cancel_completion_debounce();
         self.manual_completion_inflight.set(false);
@@ -1614,7 +1613,7 @@ impl AppState {
                 if state.manual_completion_inflight.get() {
                     return ControlFlow::Break;
                 }
-                eprintln!("[{:?}] Debouncer fired, calling LLM completion", std::time::SystemTime::now());
+
                 state.request_llm_completion_with_generation(
                     CompletionTrigger::Automatic,
                     generation,

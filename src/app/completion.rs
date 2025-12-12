@@ -67,6 +67,9 @@ impl AppState {
         // Prepare for background work
         let llm_manager = self.llm_manager.clone();
         let completion_generation = self.completion_generation.clone();
+        
+        // Determine if this is a FIM (fill-in-the-middle) request
+        let is_fim = context.contains("<｜fim▁begin｜>");
 
         // Use a channel to communicate between threads
         let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<String>>();
@@ -80,11 +83,9 @@ impl AppState {
                     return Err(anyhow::anyhow!("Request cancelled (generation mismatch)"));
                 }
 
-                eprintln!("[{:?}] Attempting to acquire LLM manager lock...", std::time::SystemTime::now());
                 let manager = llm_manager.lock().map_err(|e| {
                     anyhow::anyhow!("Failed to lock LLM manager: {}", e)
                 })?;
-                eprintln!("[{:?}] LLM manager lock acquired", std::time::SystemTime::now());
 
                 // Double-check after acquiring lock (in case it changed while waiting)
                 if generation != completion_generation.get() {
@@ -93,7 +94,6 @@ impl AppState {
                 }
 
                 // Get max tokens from settings, but use smaller limit for FIM (mid-text) completion
-                let is_fim = context.contains("<｜fim▁begin｜>");
                 let max_tokens = if is_fim {
                     // FIM completions should be short - just filling a small gap
                     // Use max 50 tokens or settings value, whichever is smaller
@@ -137,6 +137,13 @@ impl AppState {
 
                         match result {
                             Ok(completion_text) => {
+                                // For FIM completions, trim trailing whitespace since they fill inline gaps
+                                let completion_text = if is_fim {
+                                    completion_text.trim_end().to_string()
+                                } else {
+                                    completion_text
+                                };
+                                
                                 if !completion_text.trim().is_empty() {
                                     log::info!("Completion generated: {} chars", completion_text.len());
                                     // Show the completion as ghost text
