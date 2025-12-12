@@ -13,13 +13,13 @@ pub(super) struct PreferencesUi {
     pub llm_endpoint_row: adw::ActionRow,
     pub llm_endpoint_entry: gtk::Entry,
     pub override_model_switch: gtk::Switch,
-    pub llm_model_row: adw::ActionRow,
     pub llm_model_entry: gtk::Entry,
     pub gpu_combo: adw::ComboRow,
     pub gpu_model_entry: gtk::Entry,
     pub gpu_download_button: gtk::Button,
     pub cpu_model_entry: gtk::Entry,
     pub cpu_download_button: gtk::Button,
+    pub max_tokens_spin: gtk::SpinButton,
     pub whitespace_switch: gtk::Switch,
     pub wrap_switch: gtk::Switch,
 }
@@ -69,13 +69,13 @@ pub(super) fn build_preferences(
         llm_endpoint_row,
         llm_endpoint_entry,
         override_model_switch,
-        llm_model_row,
         llm_model_entry,
         gpu_combo,
         gpu_model_entry,
         gpu_download_button,
         cpu_model_entry,
         cpu_download_button,
+        max_tokens_spin,
     ) = build_llm_page(&settings.llm, gpus);
     let theming_page = build_theming_page();
     let shortcuts_page = build_shortcuts_page();
@@ -98,13 +98,13 @@ pub(super) fn build_preferences(
         llm_endpoint_row,
         llm_endpoint_entry,
         override_model_switch,
-        llm_model_row,
         llm_model_entry,
         gpu_combo,
         gpu_model_entry,
         gpu_download_button,
         cpu_model_entry,
         cpu_download_button,
+        max_tokens_spin,
         whitespace_switch,
         wrap_switch,
     }
@@ -161,13 +161,13 @@ fn build_llm_page(
     adw::ActionRow,
     gtk::Entry,
     gtk::Switch,
-    adw::ActionRow,
     gtk::Entry,
     adw::ComboRow,
     gtk::Entry,
     gtk::Button,
     gtk::Entry,
     gtk::Button,
+    gtk::SpinButton,
 ) {
     let page = adw::PreferencesPage::builder().title("LLM").build();
 
@@ -279,6 +279,24 @@ fn build_llm_page(
     cpu_model_row.set_activatable_widget(Some(&cpu_download_button));
     local_group.add(&cpu_model_row);
 
+    let max_tokens_row = adw::ActionRow::builder()
+        .title("Max completion tokens")
+        .subtitle("Maximum tokens to generate for each completion")
+        .build();
+    let max_tokens_spin = gtk::SpinButton::builder()
+        .adjustment(&gtk::Adjustment::new(
+            llm.max_completion_tokens as f64,
+            1.0,
+            512.0,
+            1.0,
+            10.0,
+            0.0,
+        ))
+        .valign(gtk::Align::Center)
+        .build();
+    max_tokens_row.add_suffix(&max_tokens_spin);
+    local_group.add(&max_tokens_row);
+
     let credentials_group = adw::PreferencesGroup::builder()
         .title("Credentials")
         .description("Tokens are stored via libsecret/KWallet (coming soon)")
@@ -312,13 +330,13 @@ fn build_llm_page(
         endpoint_row,
         endpoint_entry,
         override_model_switch,
-        model_row,
         model_entry,
         gpu_combo,
         gpu_model_entry,
         gpu_download_button,
         cpu_model_entry,
         cpu_download_button,
+        max_tokens_spin,
     )
 }
 
@@ -329,10 +347,7 @@ const PROVIDERS: &[(ProviderKind, &str)] = &[
 ];
 
 pub(super) fn provider_index(kind: &ProviderKind) -> usize {
-    PROVIDERS
-        .iter()
-        .position(|(k, _)| k == kind)
-        .unwrap_or(0)
+    PROVIDERS.iter().position(|(k, _)| k == kind).unwrap_or(0)
 }
 
 pub(super) fn provider_from_index(idx: u32) -> ProviderKind {

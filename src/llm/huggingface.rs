@@ -2,7 +2,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::from_reader;
 use sha2::{Digest, Sha256};
@@ -69,9 +69,7 @@ impl HuggingFaceModel {
         }
 
         let file = file_candidate.ok_or_else(|| {
-            anyhow!(
-                "Missing filename; provide 'owner/repo:relative/path/to/file.gguf'"
-            )
+            anyhow!("Missing filename; provide 'owner/repo:relative/path/to/file.gguf'")
         })?;
 
         Ok(Self {
@@ -89,7 +87,11 @@ impl HuggingFaceModel {
     }
 
     pub fn filename(&self) -> String {
-        self.file.split('/').last().unwrap_or(&self.file).to_string()
+        self.file
+            .split('/')
+            .last()
+            .unwrap_or(&self.file)
+            .to_string()
     }
 
     fn needs_filename_resolution(&self) -> bool {
@@ -105,7 +107,9 @@ impl HuggingFaceModel {
         let resolved = resolve_hf_alias(&self.repo, &alias)?;
         log::info!(
             "Resolved Hugging Face alias '{}' -> '{}' for repo {}",
-            alias, resolved, self.repo
+            alias,
+            resolved,
+            self.repo
         );
         self.file = resolved;
         Ok(())
@@ -122,8 +126,7 @@ impl ModelDownloader {
         Self { models_dir }
     }
 
-    /// Download a model from Hugging Face to the models directory
-    /// Returns the path to the downloaded file
+    /// Convenience wrapper that downloads without emitting UI progress.
     pub fn download(&self, model: &HuggingFaceModel) -> Result<PathBuf> {
         self.download_with_progress(model, |_| {})
     }
@@ -145,8 +148,7 @@ impl ModelDownloader {
             total: None,
         });
 
-        fs::create_dir_all(&self.models_dir)
-            .context("Failed to create models directory")?;
+        fs::create_dir_all(&self.models_dir).context("Failed to create models directory")?;
 
         let filename = resolved.filename();
         let output_path = self.models_dir.join(&filename);
@@ -208,8 +210,7 @@ impl ModelDownloader {
 
         // Write to temp file first, then rename atomically
         let temp_path = output_path.with_extension("tmp");
-        let mut file = File::create(&temp_path)
-            .context("Failed to create temp file")?;
+        let mut file = File::create(&temp_path).context("Failed to create temp file")?;
 
         let mut reader = response.into_reader();
         let mut hasher = Sha256::new();
@@ -244,17 +245,12 @@ impl ModelDownloader {
         if let Some(ref expected) = expected_hash {
             if expected != &hash_hex {
                 let _ = fs::remove_file(&temp_path);
-                anyhow::bail!(
-                    "Hash mismatch: expected {}, got {}",
-                    expected,
-                    hash_hex
-                );
+                anyhow::bail!("Hash mismatch: expected {}, got {}", expected, hash_hex);
             }
         }
 
         // Atomic rename
-        fs::rename(&temp_path, &output_path)
-            .context("Failed to rename downloaded model")?;
+        fs::rename(&temp_path, &output_path).context("Failed to rename downloaded model")?;
 
         self.write_metadata(&metadata_path, &hash_hex, expected_hash.as_deref())?;
 
@@ -269,33 +265,36 @@ impl ModelDownloader {
         Ok(output_path)
     }
 
-    /// Check if a model is already downloaded
-    pub fn is_downloaded(&self, model: &HuggingFaceModel) -> bool {
+    /// Lightweight existence check used for readiness/UI; does not hash.
+    pub fn path_exists(&self, model: &HuggingFaceModel) -> Option<PathBuf> {
         let mut resolved = model.clone();
         if let Err(err) = resolved.materialize_filename() {
             log::warn!(
                 "Failed to resolve Hugging Face alias for {}: {}",
-                model.repo, err
+                model.repo,
+                err
             );
-            return false;
+            return None;
         }
 
         let filename = resolved.filename();
         let path = self.models_dir.join(&filename);
         let metadata_path = self.metadata_path(&filename);
-        match self.verify_existing_file(&path, metadata_path.as_path()) {
-            Ok(true) => true,
-            Ok(false) | Err(_) => false,
+        if path.exists() && metadata_path.exists() {
+            Some(path)
+        } else {
+            None
         }
     }
 
-    /// Get path to a model if it's downloaded
+    /// Get path to a model if it's downloaded, verifying hash matches metadata
     pub fn get_path(&self, model: &HuggingFaceModel) -> Option<PathBuf> {
         let mut resolved = model.clone();
         if let Err(err) = resolved.materialize_filename() {
             log::warn!(
                 "Failed to resolve Hugging Face alias for {}: {}",
-                model.repo, err
+                model.repo,
+                err
             );
             return None;
         }
@@ -307,6 +306,12 @@ impl ModelDownloader {
             Ok(true) => Some(path),
             Ok(false) | Err(_) => None,
         }
+    }
+
+    /// Check if a model is already downloaded (fast path)
+    #[cfg(test)]
+    pub fn is_downloaded(&self, model: &HuggingFaceModel) -> bool {
+        self.path_exists(model).is_some()
     }
 }
 
@@ -342,7 +347,8 @@ fn resolve_hf_alias(repo: &str, alias: &str) -> Result<String> {
     if candidates.is_empty() {
         return Err(anyhow!(
             "Could not find a GGUF file containing '{}' in repo {}",
-            alias, repo
+            alias,
+            repo
         ));
     }
 
@@ -367,8 +373,7 @@ struct DownloadMetadata {
 
 impl ModelDownloader {
     fn metadata_path(&self, filename: &str) -> PathBuf {
-        self.models_dir
-            .join(format!("{}.meta.json", filename))
+        self.models_dir.join(format!("{}.meta.json", filename))
     }
 
     fn write_metadata(
@@ -420,6 +425,7 @@ impl ModelDownloader {
         Ok(computed == metadata.sha256)
     }
 
+    #[cfg(test)]
     fn compute_sha256(&self, path: &Path) -> Result<String> {
         self.compute_sha256_with_progress(path, None)
     }
@@ -489,8 +495,7 @@ mod tests {
 
     #[test]
     fn test_parse_with_revision() {
-        let model =
-            HuggingFaceModel::parse("owner/repo@refs/pr/1:snapshots/file.bin").unwrap();
+        let model = HuggingFaceModel::parse("owner/repo@refs/pr/1:snapshots/file.bin").unwrap();
         assert_eq!(model.repo, "owner/repo");
         assert_eq!(model.revision, "refs/pr/1");
         assert_eq!(model.file, "snapshots/file.bin");
@@ -498,7 +503,8 @@ mod tests {
 
     #[test]
     fn test_parse_explicit_filename() {
-        let reference = "mradermacher/Luau-Qwen3-4B-FIM-v0.1-i1-GGUF:Luau-Qwen3-4B-FIM-v0.1.i1-Q4_K_M.gguf";
+        let reference =
+            "mradermacher/Luau-Qwen3-4B-FIM-v0.1-i1-GGUF:Luau-Qwen3-4B-FIM-v0.1.i1-Q4_K_M.gguf";
         let model = HuggingFaceModel::parse(reference).unwrap();
         assert_eq!(model.repo, "mradermacher/Luau-Qwen3-4B-FIM-v0.1-i1-GGUF");
         assert_eq!(model.file, "Luau-Qwen3-4B-FIM-v0.1.i1-Q4_K_M.gguf");

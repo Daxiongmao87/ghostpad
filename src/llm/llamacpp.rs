@@ -1,12 +1,12 @@
-use std::path::Path;
-use std::sync::Arc;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel, Special};
 use llama_cpp_2::sampling::LlamaSampler;
+use std::path::Path;
+use std::sync::Arc;
 
 /// Wrapper for llama.cpp library with in-process inference
 pub struct LlamaCpp {
@@ -25,18 +25,29 @@ impl LlamaCpp {
     }
 
     /// Load a model from disk
-    pub fn load_model(&self, model_path: &Path, n_gpu_layers: Option<i32>) -> Result<LoadedModel> {
+    pub fn load_model(&self, model_path: &Path, n_gpu_layers: Option<i32>, main_gpu: Option<i32>) -> Result<LoadedModel> {
         if !model_path.exists() {
-            return Err(anyhow!("Model file does not exist: {}", model_path.display()));
+            return Err(anyhow!(
+                "Model file does not exist: {}",
+                model_path.display()
+            ));
         }
 
-        let params = if let Some(layers) = n_gpu_layers {
+        let mut params = LlamaModelParams::default();
+
+        if let Some(layers) = n_gpu_layers {
             let layers_u32 = u32::try_from(layers)
                 .map_err(|_| anyhow!("GPU layers must be zero or positive"))?;
-            LlamaModelParams::default().with_n_gpu_layers(layers_u32)
+            log::info!("Setting n_gpu_layers = {}", layers_u32);
+            params = params.with_n_gpu_layers(layers_u32);
+        }
+
+        if let Some(gpu) = main_gpu {
+            log::info!("Setting main_gpu = {}", gpu);
+            params = params.with_main_gpu(gpu);
         } else {
-            LlamaModelParams::default()
-        };
+            log::warn!("main_gpu is None - no GPU device specified!");
+        }
 
         let model = LlamaModel::load_from_file(&self.backend, model_path, &params)
             .map_err(|e| anyhow!("Failed to load model: {:?}", e))?;
@@ -56,15 +67,9 @@ pub struct LoadedModel {
 
 impl LoadedModel {
     /// Run inference with the loaded model
-    pub fn complete(
-        &self,
-        prompt: &str,
-        max_tokens: usize,
-        temperature: f32,
-    ) -> Result<String> {
+    pub fn complete(&self, prompt: &str, max_tokens: usize, temperature: f32) -> Result<String> {
         // Create context
-        let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(std::num::NonZeroU32::new(2048));
+        let ctx_params = LlamaContextParams::default().with_n_ctx(std::num::NonZeroU32::new(2048));
 
         let mut ctx = self
             .model
@@ -85,7 +90,11 @@ impl LoadedModel {
         let n_prompt = tokens.len();
 
         if n_prompt >= n_ctx {
-            return Err(anyhow!("Prompt too long: {} tokens exceeds context size {}", n_prompt, n_ctx));
+            return Err(anyhow!(
+                "Prompt too long: {} tokens exceeds context size {}",
+                n_prompt,
+                n_ctx
+            ));
         }
 
         // Prepare batch for prompt processing
@@ -107,10 +116,8 @@ impl LoadedModel {
         let mut n_cur = n_prompt;
         let n_max = n_prompt + max_tokens;
 
-        let mut sampler = LlamaSampler::chain_simple([
-            LlamaSampler::temp(temperature),
-            LlamaSampler::greedy(),
-        ]);
+        let mut sampler =
+            LlamaSampler::chain_simple([LlamaSampler::temp(temperature), LlamaSampler::greedy()]);
 
         while n_cur < n_max {
             // Sample next token
@@ -135,7 +142,8 @@ impl LoadedModel {
 
             // Prepare next batch
             batch.clear();
-            batch.add(new_token_id, n_cur as i32, &[0], true)
+            batch
+                .add(new_token_id, n_cur as i32, &[0], true)
                 .map_err(|e| anyhow!("Failed to add token to batch: {:?}", e))?;
 
             // Decode
@@ -146,38 +154,5 @@ impl LoadedModel {
         }
 
         Ok(result)
-    }
-
-    /// Get the model reference
-    pub fn model(&self) -> &LlamaModel {
-        &self.model
-    }
-}
-
-/// Configuration for a single inference run
-#[derive(Debug, Clone)]
-pub struct InferenceConfig {
-    pub prompt: String,
-    pub max_tokens: usize,
-    pub temperature: f32,
-}
-
-impl InferenceConfig {
-    pub fn new(prompt: String) -> Self {
-        Self {
-            prompt,
-            max_tokens: 512,
-            temperature: 0.7,
-        }
-    }
-
-    pub fn with_max_tokens(mut self, max_tokens: usize) -> Self {
-        self.max_tokens = max_tokens;
-        self
-    }
-
-    pub fn with_temperature(mut self, temperature: f32) -> Self {
-        self.temperature = temperature;
-        self
     }
 }

@@ -65,7 +65,8 @@ impl AppState {
 
     pub(super) fn restart_autosave(self: &Rc<Self>) {
         if let Some(source) = self.autosave_source.borrow_mut().take() {
-            source.remove();
+            // Ignore errors if source was already removed
+            let _ = source.remove();
         }
         let interval = self.settings.borrow().autosave_interval_secs;
         if interval == 0 {

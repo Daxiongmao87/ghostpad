@@ -1,4 +1,5 @@
 pub mod autosave;
+pub mod completion;
 pub mod preferences;
 pub mod recent;
 pub mod recovery;

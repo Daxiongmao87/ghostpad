@@ -1,6 +1,6 @@
 mod app;
-mod llm;
 mod document;
+mod llm;
 mod paths;
 mod settings;
 mod state_store;

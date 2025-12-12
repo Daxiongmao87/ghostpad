@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::Instant;
 
 use adw::prelude::*;
@@ -8,7 +9,6 @@ use gtk4::gdk;
 use gtk4::gio;
 use gtk4::glib::{self, ControlFlow, Propagation};
 use gtk4::prelude::*;
-use std::sync::mpsc;
 use gtk4::{self as gtk};
 use libadwaita as adw;
 use sourceview5::{SearchContext, SearchSettings, prelude::*};
@@ -26,15 +26,16 @@ use crate::settings::Settings;
 use crate::state_store::WindowState;
 
 use super::autosave::CUSTOM_AUTOSAVE_SENTINEL;
+use super::completion::CompletionTrigger;
 use super::preferences::{self, PreferencesUi};
 
 pub fn build_ui(application: &adw::Application) -> Result<()> {
     let paths = AppPaths::initialize()?;
     let settings = Settings::load(&paths)?;
-    let llm_manager = RefCell::new(LlmManager::new(
+    let llm_manager = Arc::new(Mutex::new(LlmManager::new(
         settings.llm.clone(),
         paths.models_dir.clone(),
-    ));
+    )));
 
     let document = Document::new();
     let buffer = document.buffer();
@@ -201,6 +202,12 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .popover(&autosave_popover)
         .build();
 
+    let llm_spinner = gtk::Spinner::new();
+    llm_spinner.hide();
+    let llm_status_label = gtk::Label::new(Some("Loading LLM..."));
+    llm_status_label.add_css_class("dim-label");
+    llm_status_label.hide();
+
     let status_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(12)
@@ -213,6 +220,8 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
     status_box.append(&cursor_label);
     status_box.append(&autosave_button);
     status_box.append(&autosave_label);
+    status_box.append(&llm_spinner);
+    status_box.append(&llm_status_label);
 
     let download_label = gtk::Label::new(None);
     download_label.set_xalign(0.0);
@@ -277,6 +286,8 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         status_label,
         cursor_label,
         autosave_label,
+        llm_spinner: llm_spinner.clone(),
+        llm_status_label: llm_status_label.clone(),
         search_revealer: search_revealer.clone(),
         search_entry: search_entry.clone(),
         replace_entry: replace_entry.clone(),
@@ -285,6 +296,12 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         download_progress: download_progress.clone(),
         download_label: download_label.clone(),
         download_title: RefCell::new(None),
+        manual_completion_inflight: Cell::new(false),
+        auto_completion_running: Cell::new(false),
+        completion_debounce: RefCell::new(None),
+        completion_generation: Cell::new(0),
+        completion_suppression_depth: Cell::new(0),
+        last_completion_schedule: Cell::new(None),
         search_settings: search_settings.clone(),
         search_context: search_context.clone(),
         recent_button: recent_button.clone(),
@@ -293,7 +310,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         autosave_button: autosave_button.clone(),
         autosave_options,
         preferences: preferences_ui,
-        llm_manager,
+        llm_manager: Arc::clone(&llm_manager),
         gpus: detected_gpus,
         paths,
         settings: RefCell::new(settings),
@@ -306,6 +323,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
     });
 
     state.initialize();
+    state.install_completion_shortcuts();
     state.refresh_recent_menu();
     state.check_recovery_snapshots();
     state.check_llm_readiness();
@@ -546,6 +564,10 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
     }
 
     window.present();
+
+    // Start loading LLM model in background after window is visible
+    state.preload_llm_model();
+
     Ok(())
 }
 
@@ -558,6 +580,8 @@ pub(super) struct AppState {
     pub(super) status_label: gtk::Label,
     pub(super) cursor_label: gtk::Label,
     pub(super) autosave_label: gtk::Label,
+    pub(super) llm_spinner: gtk::Spinner,
+    pub(super) llm_status_label: gtk::Label,
     pub(super) search_revealer: gtk::Revealer,
     pub(super) search_entry: gtk::Entry,
     pub(super) replace_entry: gtk::Entry,
@@ -566,6 +590,12 @@ pub(super) struct AppState {
     pub(super) download_progress: gtk::ProgressBar,
     pub(super) download_label: gtk::Label,
     pub(super) download_title: RefCell<Option<String>>,
+    pub(super) manual_completion_inflight: Cell<bool>,
+    pub(super) auto_completion_running: Cell<bool>,
+    pub(super) completion_debounce: RefCell<Option<glib::SourceId>>,
+    pub(super) completion_generation: Cell<u64>,
+    pub(super) completion_suppression_depth: Cell<u32>,
+    pub(super) last_completion_schedule: Cell<Option<std::time::Instant>>,
     pub(super) search_settings: SearchSettings,
     pub(super) search_context: SearchContext,
     pub(super) recent_button: gtk::MenuButton,
@@ -574,7 +604,7 @@ pub(super) struct AppState {
     pub(super) autosave_button: gtk::MenuButton,
     pub(super) autosave_options: Vec<(u64, &'static str)>,
     pub(super) preferences: PreferencesUi,
-    pub(super) llm_manager: RefCell<LlmManager>,
+    pub(super) llm_manager: Arc<Mutex<LlmManager>>,
     pub(super) gpus: Vec<GpuDevice>,
     pub(super) paths: AppPaths,
     pub(super) settings: RefCell<Settings>,
@@ -599,6 +629,49 @@ impl AppState {
         self.hook_editor_preferences();
     }
 
+    fn install_completion_shortcuts(self: &Rc<Self>) {
+        let controller = gtk::EventControllerKey::new();
+        // Set to CAPTURE phase so we intercept Tab before TextView's default handler
+        controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(self);
+        controller.connect_key_pressed(move |_, keyval, _, state| {
+            if let Some(app) = weak.upgrade() {
+                if state.contains(gdk::ModifierType::CONTROL_MASK) && keyval == gdk::Key::space {
+                    app.request_llm_completion();
+                    return glib::Propagation::Stop;
+                }
+
+                // Log Tab presses to debug
+                if keyval == gdk::Key::Tab {
+                    log::info!("Tab key pressed, ghost_is_active={}", app.document.ghost_is_active());
+                }
+
+                if app.document.ghost_is_active() {
+                    match keyval {
+                        gdk::Key::Tab => {
+                            log::info!("Accepting ghost text completion");
+                            app.accept_current_completion();
+                            return glib::Propagation::Stop;
+                        }
+                        gdk::Key::Escape => {
+                            log::info!("Escape key pressed with active ghost text");
+                            app.cancel_current_completion();
+                            return glib::Propagation::Stop;
+                        }
+                        _ => {
+                            if is_textual_key(keyval, state) {
+                                app.cancel_current_completion();
+                            }
+                        }
+                    }
+                }
+            }
+
+            glib::Propagation::Proceed
+        });
+        self.document.view().add_controller(controller);
+    }
+
     fn show_download_banner(&self, title: &str) {
         self.download_title.replace(Some(title.to_string()));
         self.download_label
@@ -620,8 +693,7 @@ impl AppState {
                 self.download_label
                     .set_text(&format!("{} — preparing", base));
                 self.download_progress.pulse();
-                self.download_progress
-                    .set_text(Some("Preparing download…"));
+                self.download_progress.set_text(Some("Preparing download…"));
             }
             DownloadPhase::VerifyingExisting => {
                 self.download_label
@@ -637,8 +709,7 @@ impl AppState {
                 self.download_label
                     .set_text(&format!("{} — finishing", base));
                 self.download_progress.set_fraction(1.0);
-                self.download_progress
-                    .set_text(Some("Download complete"));
+                self.download_progress.set_text(Some("Download complete"));
             }
         }
     }
@@ -650,8 +721,7 @@ impl AppState {
 
     fn update_progress_bar(&self, progress: DownloadProgress) {
         if let Some(total) = progress.total.filter(|t| *t > 0) {
-            let fraction = (progress.downloaded as f64 / total as f64)
-                .clamp(0.0, 1.0);
+            let fraction = (progress.downloaded as f64 / total as f64).clamp(0.0, 1.0);
             self.download_progress.set_fraction(fraction);
             self.download_progress.set_text(Some(&format!(
                 "{:.1}% ({} / {})",
@@ -674,6 +744,7 @@ impl AppState {
             if let Some(state) = weak.upgrade() {
                 state.update_title();
                 state.last_edit.replace(Some(Instant::now()));
+                state.handle_text_change();
             }
         });
 
@@ -681,7 +752,16 @@ impl AppState {
         self.buffer.connect_mark_set(move |_buf, _iter, mark| {
             if mark.name().as_deref() == Some("insert") {
                 if let Some(state) = weak_cursor.upgrade() {
+                    // Ignore cursor moves if we are manipulating ghost text internally
+                    if state.are_completions_suppressed() {
+                        return;
+                    }
+                    
                     state.update_cursor_label();
+                    // Dismiss ghost text when cursor moves
+                    if state.document.ghost_is_active() {
+                        state.cancel_current_completion();
+                    }
                 }
             }
         });
@@ -1040,7 +1120,7 @@ impl AppState {
     }
 
     fn sync_llm_preferences(&self) {
-        let (provider, idx, endpoint, override_model, model_path, gpu_idx, gpu_model, cpu_model) = {
+        let (provider, idx, endpoint, override_model, model_path, gpu_idx, gpu_model, cpu_model, max_tokens) = {
             let settings = self.settings.borrow();
             let provider = settings.llm.provider;
             let idx = preferences::provider_index(&provider);
@@ -1060,18 +1140,38 @@ impl AppState {
             };
             let gpu_model = settings.llm.default_gpu_model.clone();
             let cpu_model = settings.llm.default_cpu_model.clone();
-            (provider, idx, endpoint, override_model, model_path, gpu_idx, gpu_model, cpu_model)
+            let max_tokens = settings.llm.max_completion_tokens;
+            (
+                provider,
+                idx,
+                endpoint,
+                override_model,
+                model_path,
+                gpu_idx,
+                gpu_model,
+                cpu_model,
+                max_tokens,
+            )
         };
 
         self.preferences.llm_provider_combo.set_selected(idx as u32);
-        self.preferences.llm_endpoint_row.set_visible(provider != ProviderKind::Local);
+        self.preferences
+            .llm_endpoint_row
+            .set_visible(provider != ProviderKind::Local);
         self.preferences.llm_endpoint_entry.set_text(&endpoint);
-        self.preferences.override_model_switch.set_active(override_model);
-        self.preferences.llm_model_entry.set_sensitive(override_model);
+        self.preferences
+            .override_model_switch
+            .set_active(override_model);
+        self.preferences
+            .llm_model_entry
+            .set_sensitive(override_model);
         self.preferences.llm_model_entry.set_text(&model_path);
         self.preferences.gpu_combo.set_selected(gpu_idx as u32);
         self.preferences.gpu_model_entry.set_text(&gpu_model);
         self.preferences.cpu_model_entry.set_text(&cpu_model);
+        self.preferences
+            .max_tokens_spin
+            .set_value(max_tokens as f64);
     }
 
     fn hook_llm_preferences(self: &Rc<Self>) {
@@ -1131,16 +1231,9 @@ impl AppState {
         self.preferences
             .gpu_download_button
             .connect_clicked(move |_| {
-                let model_ref = state
-                    .preferences
-                    .gpu_model_entry
-                    .text()
-                    .trim()
-                    .to_string();
+                let model_ref = state.preferences.gpu_model_entry.text().trim().to_string();
                 if model_ref.is_empty() {
-                    let toast = adw::Toast::new(
-                        "Enter a GPU model reference before downloading.",
-                    );
+                    let toast = adw::Toast::new("Enter a GPU model reference before downloading.");
                     toast.set_timeout(6);
                     state.toast_overlay.add_toast(toast);
                 } else {
@@ -1152,21 +1245,22 @@ impl AppState {
         self.preferences
             .cpu_download_button
             .connect_clicked(move |_| {
-                let model_ref = state
-                    .preferences
-                    .cpu_model_entry
-                    .text()
-                    .trim()
-                    .to_string();
+                let model_ref = state.preferences.cpu_model_entry.text().trim().to_string();
                 if model_ref.is_empty() {
-                    let toast = adw::Toast::new(
-                        "Enter a CPU model reference before downloading.",
-                    );
+                    let toast = adw::Toast::new("Enter a CPU model reference before downloading.");
                     toast.set_timeout(6);
                     state.toast_overlay.add_toast(toast);
                 } else {
                     state.download_llm_model(model_ref);
                 }
+            });
+
+        let state = Rc::clone(self);
+        self.preferences
+            .max_tokens_spin
+            .connect_value_changed(move |spin| {
+                let value = spin.value() as usize;
+                state.update_max_completion_tokens(value);
             });
     }
 
@@ -1179,9 +1273,7 @@ impl AppState {
             settings.llm.provider = provider;
         }
         self.save_settings();
-        self.llm_manager
-            .borrow_mut()
-            .update_config(self.settings.borrow().llm.clone());
+        self.refresh_llm_manager_config();
         self.sync_llm_preferences();
     }
 
@@ -1194,9 +1286,7 @@ impl AppState {
             settings.llm.endpoint = endpoint;
         }
         self.save_settings();
-        self.llm_manager
-            .borrow_mut()
-            .update_config(self.settings.borrow().llm.clone());
+        self.refresh_llm_manager_config();
     }
 
     fn update_llm_local_model(&self, path: String) {
@@ -1208,9 +1298,7 @@ impl AppState {
             settings.llm.local_model_path = path;
         }
         self.save_settings();
-        self.llm_manager
-            .borrow_mut()
-            .update_config(self.settings.borrow().llm.clone());
+        self.refresh_llm_manager_config();
     }
 
     fn update_override_model(&self, active: bool) {
@@ -1222,9 +1310,7 @@ impl AppState {
             settings.llm.override_model_path = active;
         }
         self.save_settings();
-        self.llm_manager
-            .borrow_mut()
-            .update_config(self.settings.borrow().llm.clone());
+        self.refresh_llm_manager_config();
         self.sync_llm_preferences();
     }
 
@@ -1243,9 +1329,7 @@ impl AppState {
             }
         }
         self.save_settings();
-        self.llm_manager
-            .borrow_mut()
-            .update_config(self.settings.borrow().llm.clone());
+        self.refresh_llm_manager_config();
         self.sync_llm_preferences();
     }
 
@@ -1258,9 +1342,7 @@ impl AppState {
             settings.llm.default_gpu_model = model;
         }
         self.save_settings();
-        self.llm_manager
-            .borrow_mut()
-            .update_config(self.settings.borrow().llm.clone());
+        self.refresh_llm_manager_config();
     }
 
     fn update_cpu_model(&self, model: String) {
@@ -1272,9 +1354,19 @@ impl AppState {
             settings.llm.default_cpu_model = model;
         }
         self.save_settings();
-        self.llm_manager
-            .borrow_mut()
-            .update_config(self.settings.borrow().llm.clone());
+        self.refresh_llm_manager_config();
+    }
+
+    fn update_max_completion_tokens(&self, tokens: usize) {
+        {
+            let mut settings = self.settings.borrow_mut();
+            if settings.llm.max_completion_tokens == tokens {
+                return;
+            }
+            settings.llm.max_completion_tokens = tokens;
+        }
+        self.save_settings();
+        self.refresh_llm_manager_config();
     }
 
     fn save_settings(&self) {
@@ -1314,6 +1406,154 @@ impl AppState {
             });
     }
 
+    fn handle_text_change(self: &Rc<Self>) {
+        if self.are_completions_suppressed() {
+            return;
+        }
+        self.cancel_completion_debounce();
+        self.manual_completion_inflight.set(false);
+        self.with_suppressed_completion(|| self.document.dismiss_ghost_text());
+        let generation = self.bump_completion_generation();
+        self.schedule_auto_completion(generation);
+    }
+
+    pub(super) fn schedule_auto_completion(self: &Rc<Self>, generation: u64) {
+        if self.manual_completion_inflight.get() {
+            return;
+        }
+
+        const DEBOUNCE_MS: u64 = 100;
+        const MAX_WAIT_MS: u64 = 500;
+
+        // Check if we should force completion due to max wait time
+        let now = Instant::now();
+        let should_force = if let Some(first_schedule) = self.last_completion_schedule.get() {
+            now.duration_since(first_schedule).as_millis() as u64 >= MAX_WAIT_MS
+        } else {
+            false
+        };
+
+        // Track when we first started scheduling (reset on force or when not debouncing)
+        if self.completion_debounce.borrow().is_none() || should_force {
+            self.last_completion_schedule.set(Some(now));
+        }
+
+        // ALWAYS cancel old debounce and schedule new one when content changes
+        // The running flag only prevents spawning concurrent threads, not scheduling
+        self.cancel_completion_debounce();
+
+        let delay_ms = if should_force {
+            log::info!("Forcing completion after {}ms of continuous typing", MAX_WAIT_MS);
+            0 // Fire immediately
+        } else {
+            DEBOUNCE_MS
+        };
+
+        let weak = Rc::downgrade(self);
+        let source = glib::timeout_add_local(std::time::Duration::from_millis(delay_ms), move || {
+            if let Some(state) = weak.upgrade() {
+                // Clear the stored source ID since we're about to complete
+                state.completion_debounce.borrow_mut().take();
+                // Reset the schedule tracker
+                state.last_completion_schedule.set(None);
+
+                if state.manual_completion_inflight.get() {
+                    return ControlFlow::Break;
+                }
+                state.request_llm_completion_with_generation(
+                    CompletionTrigger::Automatic,
+                    generation,
+                );
+            }
+            ControlFlow::Break
+        });
+        self.completion_debounce.borrow_mut().replace(source);
+    }
+
+    fn cancel_completion_debounce(&self) {
+        if let Some(source) = self.completion_debounce.borrow_mut().take() {
+            // Ignore errors if source was already removed
+            let _ = source.remove();
+        }
+    }
+
+    pub(super) fn bump_completion_generation(&self) -> u64 {
+        let next = self.completion_generation.get().wrapping_add(1);
+        self.completion_generation.set(next);
+        next
+    }
+
+    fn request_llm_completion(self: &Rc<Self>) {
+        let context = self.completion_context();
+        if context.trim().is_empty() {
+            let toast = adw::Toast::new("Type some text before requesting a completion.");
+            toast.set_timeout(5);
+            self.toast_overlay.add_toast(toast);
+            return;
+        }
+
+        let generation = self.bump_completion_generation();
+        self.request_llm_completion_with_generation(CompletionTrigger::Manual, generation);
+    }
+
+    pub(super) fn completion_context(&self) -> String {
+        const PREFIX_CHARS: usize = 2000;
+        const SUFFIX_CHARS: usize = 1000;
+
+        let buffer = self.document.buffer();
+        let cursor_offset = buffer.cursor_position();
+        let cursor_iter = buffer.iter_at_offset(cursor_offset);
+
+        // Get prefix (text before cursor)
+        let mut prefix_start = cursor_iter.clone();
+        for _ in 0..PREFIX_CHARS {
+            if !prefix_start.backward_char() {
+                break;
+            }
+        }
+        let prefix = buffer.text(&prefix_start, &cursor_iter, true).to_string();
+
+        // Get suffix (text after cursor)
+        let mut suffix_end = cursor_iter.clone();
+        for _ in 0..SUFFIX_CHARS {
+            if !suffix_end.forward_char() {
+                break;
+            }
+        }
+        let suffix = buffer.text(&cursor_iter, &suffix_end, true).to_string();
+
+        // Format as FIM prompt for Qwen models
+        // Format: <|fim_prefix|>PREFIX<|fim_suffix|>SUFFIX<|fim_middle|>
+        if suffix.is_empty() {
+            // No suffix - just return prefix (end of document)
+            prefix
+        } else {
+            // FIM format with both prefix and suffix
+            format!("<|fim_prefix|>{}<|fim_suffix|>{}<|fim_middle|>", prefix, suffix)
+        }
+    }
+
+    fn accept_current_completion(self: &Rc<Self>) {
+        log::info!("Accepting ghost text completion");
+        let mut accepted = false;
+        self.with_suppressed_completion(|| {
+            accepted = self.document.accept_ghost_text();
+        });
+        if accepted {
+            log::info!("Ghost text accepted successfully");
+            self.status_label.set_text("Completion accepted");
+            let generation = self.bump_completion_generation();
+            self.schedule_auto_completion(generation);
+        } else {
+            log::warn!("No ghost text to accept");
+        }
+    }
+
+    fn cancel_current_completion(&self) {
+        self.with_suppressed_completion(|| self.document.dismiss_ghost_text());
+        self.status_label.set_text("Suggestion dismissed");
+    }
+
     fn set_show_whitespace(&self, show: bool) {
         {
             let mut settings = self.settings.borrow_mut();
@@ -1344,7 +1584,10 @@ impl AppState {
             return;
         }
 
-        let readiness = self.llm_manager.borrow().check_readiness();
+        let readiness = self
+            .lock_llm_manager()
+            .map(|mgr| mgr.check_readiness())
+            .unwrap_or(LlmReadiness::LocalBackendUnavailable);
 
         if readiness == LlmReadiness::Ready {
             // All good, nothing to show
@@ -1371,21 +1614,15 @@ impl AppState {
                 ),
                 Some("Download Model"),
             ),
-            LlmReadiness::MissingLlamaCli => (
-                "Local LLM inference requires llama-cli, which was not found on your system.\n\n\
-                Please install llama.cpp and ensure llama-cli is in your PATH, or switch to a remote provider in Preferences."
+            LlmReadiness::LocalBackendUnavailable => (
+                "Ghostpad could not initialize its bundled llama.cpp backend for local inference.\n\n\
+                (Development build hint) If you're running from source, make sure the llama.cpp shared libraries and GPU/CPU drivers it depends on are available; otherwise, switch to a remote provider in Preferences."
                     .to_string(),
                 Some("Open Preferences"),
             ),
             LlmReadiness::NeedsEndpoint => (
                 "Your LLM provider requires an endpoint URL, but none is configured.\n\n\
                 Please configure your LLM settings in Preferences."
-                    .to_string(),
-                Some("Open Preferences"),
-            ),
-            LlmReadiness::NotConfigured => (
-                "LLM completions are not configured yet.\n\n\
-                Please configure your LLM settings in Preferences to enable AI-assisted code completion."
                     .to_string(),
                 Some("Open Preferences"),
             ),
@@ -1477,7 +1714,15 @@ impl AppState {
             Finished(anyhow::Result<PathBuf>),
         }
 
-        let downloader = self.llm_manager.borrow().downloader_handle();
+        let downloader = match self.lock_llm_manager() {
+            Some(manager) => manager.downloader_handle(),
+            None => {
+                self.hide_download_banner();
+                self.status_label
+                    .set_text("LLM manager unavailable; aborting download");
+                return;
+            }
+        };
         let (sender, receiver) = mpsc::channel::<DownloadMsg>();
 
         std::thread::spawn(move || {
@@ -1555,6 +1800,22 @@ impl AppState {
         dialog.add_filter(&all_filter);
         dialog.set_filter(&text_filter);
     }
+
+    fn refresh_llm_manager_config(&self) {
+        if let Some(mut manager) = self.lock_llm_manager() {
+            manager.update_config(self.settings.borrow().llm.clone());
+        }
+    }
+
+    fn lock_llm_manager(&self) -> Option<MutexGuard<'_, LlmManager>> {
+        match self.llm_manager.lock() {
+            Ok(guard) => Some(guard),
+            Err(err) => {
+                log::error!("Failed to lock LLM manager: {err}");
+                None
+            }
+        }
+    }
 }
 
 fn human_readable_bytes(bytes: u64) -> String {
@@ -1573,4 +1834,11 @@ fn human_readable_bytes(bytes: u64) -> String {
     } else {
         format!("{value:.1} {}", UNITS[unit])
     }
+}
+
+fn is_textual_key(key: gdk::Key, state: gdk::ModifierType) -> bool {
+    if state.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK) {
+        return false;
+    }
+    key.to_unicode().map(|ch| !ch.is_control()).unwrap_or(false)
 }
