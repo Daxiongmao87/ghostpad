@@ -18,7 +18,11 @@
 
 ## 🖼️ Screenshot
 
-*Coming soon*
+<p align="center">
+  <img src="data/screenshot.png" alt="Ghostpad Screenshot" width="800">
+</p>
+
+*Ghost text suggestions appear in gray italics as you type*
 
 ## 📦 Installation
 
