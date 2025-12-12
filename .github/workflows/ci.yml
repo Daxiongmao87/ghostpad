@@ -29,9 +29,8 @@ jobs:
           pkg-config
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-action@stable
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
         components: clippy, rustfmt
         
     - name: Cache cargo registry
