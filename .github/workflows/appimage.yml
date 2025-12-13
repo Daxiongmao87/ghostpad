@@ -36,6 +36,15 @@ jobs:
           build-essential \
           vulkan-sdk
 
+    - name: Configure Vulkan SDK
+      run: |
+        # Ensure VULKAN_SDK environment variable is set for CMake
+        echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
+        
+        # Verify glslc installation
+        which glslc
+        glslc --version
+
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
         
