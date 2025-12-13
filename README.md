@@ -59,7 +59,7 @@ cargo build --release
 
 ### AppImage
 
-*Coming soon* – Check the [Releases](https://github.com/Daxiongmao87/wispnote/releases) page.
+Download the latest AppImage from the [Releases](https://github.com/Daxiongmao87/wispnote/releases) page.
 
 ### Flatpak
 
