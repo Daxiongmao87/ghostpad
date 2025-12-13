@@ -59,7 +59,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
         .collect();
 
     let header = adw::HeaderBar::builder()
-        .title_widget(&gtk::Label::new(Some("Ghostpad")))
+        .title_widget(&gtk::Label::new(Some("Wispnote")))
         .build();
     let new_btn = gtk::Button::from_icon_name("document-new-symbolic");
     new_btn.set_tooltip_text(Some("New window"));
@@ -328,7 +328,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
 
     let window = adw::ApplicationWindow::builder()
         .application(application)
-        .title("Ghostpad")
+        .title("Wispnote")
         .default_width(window_state.width)
         .default_height(window_state.height)
         .content(&chrome)
@@ -681,7 +681,7 @@ pub fn build_ui(application: &adw::Application) -> Result<()> {
 
     // Keep state alive by attaching it to the window
     unsafe {
-        window.set_data("ghostpad_app_state", state.clone());
+        window.set_data("wispnote_app_state", state.clone());
     }
 
     // Start loading LLM model in background after window is visible

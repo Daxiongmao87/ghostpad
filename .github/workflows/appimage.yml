@@ -80,17 +80,17 @@ jobs:
         mkdir -p AppDir/usr/share/icons/hicolor/64x64/apps
         
         # Copy binary
-        cp target/release/ghostpad AppDir/usr/bin/
+        cp target/release/wispnote AppDir/usr/bin/
         
         # Copy desktop file
-        cp data/com.ghostpad.Ghostpad.desktop AppDir/usr/share/applications/
-        cp data/com.ghostpad.Ghostpad.desktop AppDir/
+        cp data/com.wispnote.Wispnote.desktop AppDir/usr/share/applications/
+        cp data/com.wispnote.Wispnote.desktop AppDir/
         
         # Copy icon
-        cp data/icons/com.ghostpad.Ghostpad.png AppDir/usr/share/icons/hicolor/512x512/apps/
-        cp data/icons/com.ghostpad.Ghostpad.png AppDir/usr/share/icons/hicolor/128x128/apps/
-        cp data/icons/com.ghostpad.Ghostpad.png AppDir/usr/share/icons/hicolor/64x64/apps/
-        cp data/icons/com.ghostpad.Ghostpad.png AppDir/com.ghostpad.Ghostpad.png
+        cp data/icons/com.wispnote.Wispnote.png AppDir/usr/share/icons/hicolor/512x512/apps/
+        cp data/icons/com.wispnote.Wispnote.png AppDir/usr/share/icons/hicolor/128x128/apps/
+        cp data/icons/com.wispnote.Wispnote.png AppDir/usr/share/icons/hicolor/64x64/apps/
+        cp data/icons/com.wispnote.Wispnote.png AppDir/com.wispnote.Wispnote.png
         
         # Create AppRun script
         cat > AppDir/AppRun << 'EOF'
@@ -102,7 +102,7 @@ jobs:
         export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS}"
         export GDK_PIXBUF_MODULE_FILE="${HERE}/usr/lib/${{ matrix.arch }}-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
         export GI_TYPELIB_PATH="${HERE}/usr/lib/${{ matrix.arch }}-linux-gnu/girepository-1.0"
-        exec "${HERE}/usr/bin/ghostpad" "$@"
+        exec "${HERE}/usr/bin/wispnote" "$@"
         EOF
         chmod +x AppDir/AppRun
 
@@ -122,25 +122,25 @@ jobs:
         ./linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
           --appdir AppDir \
           --plugin gtk \
-          --desktop-file data/com.ghostpad.Ghostpad.desktop \
-          --icon-file data/icons/com.ghostpad.Ghostpad.png \
+          --desktop-file data/com.wispnote.Wispnote.desktop \
+          --icon-file data/icons/com.wispnote.Wispnote.png \
           --output appimage
           
     - name: Rename AppImage
       run: |
-        mv Ghostpad*.AppImage Ghostpad-${{ matrix.arch }}.AppImage
+        mv Wispnote*.AppImage Wispnote-${{ matrix.arch }}.AppImage
         
     - name: Upload AppImage artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Ghostpad-${{ matrix.arch }}-AppImage
-        path: Ghostpad-${{ matrix.arch }}.AppImage
+        name: Wispnote-${{ matrix.arch }}-AppImage
+        path: Wispnote-${{ matrix.arch }}.AppImage
         
     - name: Create Release (on tag)
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: Ghostpad-${{ matrix.arch }}.AppImage
+        files: Wispnote-${{ matrix.arch }}.AppImage
         draft: false
         prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
       env:

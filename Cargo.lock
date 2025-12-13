@@ -551,30 +551,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ghostpad"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "directories",
- "env_logger",
- "gio 0.20.12",
- "glib 0.20.12",
- "gtk4",
- "libadwaita",
- "llama-cpp-2",
- "log",
- "once_cell",
- "serde",
- "serde_json",
- "sha2",
- "sourceview5",
- "tempfile",
- "toml 0.8.23",
- "ureq",
- "uuid",
-]
-
-[[package]]
 name = "gio"
 version = "0.20.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2170,6 +2146,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "wispnote"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "env_logger",
+ "gio 0.20.12",
+ "glib 0.20.12",
+ "gtk4",
+ "libadwaita",
+ "llama-cpp-2",
+ "log",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sourceview5",
+ "tempfile",
+ "toml 0.8.23",
+ "ureq",
+ "uuid",
 ]
 
 [[package]]

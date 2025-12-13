@@ -12,7 +12,7 @@ fn main() -> glib::ExitCode {
     env_logger::init();
 
     let app = adw::Application::builder()
-        .application_id("com.ghostpad.Ghostpad")
+        .application_id("com.wispnote.Wispnote")
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
