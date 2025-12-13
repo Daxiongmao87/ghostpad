@@ -1,10 +1,10 @@
-# Ghostpad
+# Wispnote
 
 <p align="center">
-  <img src="data/icons/com.ghostpad.Ghostpad.png" width="128" height="128" alt="Ghostpad Icon">
+  <img src="data/icons/com.wispnote.Wispnote.png" width="128" height="128" alt="Wispnote Icon">
 </p>
 
-**Ghostpad** is a lightweight, native Linux text editor with AI-powered autocomplete. Think of it as a distraction-free writing environment with GitHub Copilot-style suggestions—running entirely on your local machine.
+**Wispnote** is a lightweight, native Linux text editor with AI-powered autocomplete. Think of it as a distraction-free writing environment with GitHub Copilot-style suggestions—running entirely on your local machine.
 
 ## ✨ Features
 
@@ -19,7 +19,7 @@
 ## 🖼️ Screenshot
 
 <p align="center">
-  <img src="data/screenshot.png" alt="Ghostpad Screenshot" width="800">
+  <img src="data/screenshot.png" alt="Wispnote Screenshot" width="800">
 </p>
 
 *Ghost text suggestions appear in gray italics as you type*
@@ -51,15 +51,15 @@ sudo pacman -S gtk4 libadwaita gtksourceview5
 
 **Build & Run:**
 ```bash
-git clone https://github.com/Daxiongmao87/ghostpad.git
-cd ghostpad
+git clone https://github.com/Daxiongmao87/wispnote.git
+cd wispnote
 cargo build --release
-./target/release/ghostpad
+./target/release/wispnote
 ```
 
 ### AppImage
 
-*Coming soon* – Check the [Releases](https://github.com/Daxiongmao87/ghostpad/releases) page.
+*Coming soon* – Check the [Releases](https://github.com/Daxiongmao87/wispnote/releases) page.
 
 ### Flatpak
 
@@ -67,14 +67,14 @@ cargo build --release
 
 ## 🚀 Quick Start
 
-1. **Launch Ghostpad** and start typing
+1. **Launch Wispnote** and start typing
 2. **Wait for suggestions** – Ghost text appears after a brief pause
 3. **Press Tab** to accept a suggestion, **Esc** to dismiss
 4. **Ctrl+Space** for manual completion trigger
 
 ### LLM Configuration
 
-On first run, Ghostpad will download a default model (~800MB). You can configure:
+On first run, Wispnote will download a default model (~800MB). You can configure:
 - **Preferences → LLM** to change models or endpoints
 - GPU vs CPU inference
 - Max tokens and other parameters
@@ -96,10 +96,10 @@ On first run, Ghostpad will download a default model (~800MB). You can configure
 
 ## 🔧 Configuration
 
-Ghostpad stores its configuration in standard XDG directories:
-- Config: `~/.config/ghostpad/`
-- Data (models): `~/.local/share/ghostpad/models/`
-- State (autosave): `~/.local/state/ghostpad/`
+Wispnote stores its configuration in standard XDG directories:
+- Config: `~/.config/wispnote/`
+- Data (models): `~/.local/share/wispnote/models/`
+- State (autosave): `~/.local/state/wispnote/`
 
 ## 🤝 Contributing
 

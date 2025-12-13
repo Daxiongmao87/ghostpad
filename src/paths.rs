@@ -11,7 +11,7 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn initialize() -> Result<Self> {
-        let dirs = ProjectDirs::from("com", "Ghostpad", "ghostpad")
+        let dirs = ProjectDirs::from("com", "Wispnote", "wispnote")
             .context("Unable to determine XDG directories")?;
         let config_dir = dirs.config_dir().to_path_buf();
         let data_dir = dirs.data_dir().to_path_buf();

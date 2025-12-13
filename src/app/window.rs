@@ -1008,7 +1008,7 @@ impl AppState {
         let name = derive_display_name(&self.file_path.borrow());
         let marker = if self.buffer.is_modified() { "*" } else { "" };
         self.window()
-            .set_title(Some(&format!("Ghostpad — {name}{marker}")));
+            .set_title(Some(&format!("Wispnote — {name}{marker}")));
         self.status_label.set_text(&format!(
             "{}{}",
             name,
@@ -1090,7 +1090,7 @@ impl AppState {
             .transient_for(&self.window())
             .modal(true)
             .text("File changed on disk")
-            .secondary_text("The file was modified outside Ghostpad. Reload it?")
+            .secondary_text("The file was modified outside Wispnote. Reload it?")
             .build();
         dialog.add_button("Keep My Changes", gtk::ResponseType::Cancel);
         dialog.add_button("Reload", gtk::ResponseType::Accept);
@@ -1797,7 +1797,7 @@ impl AppState {
                 Some("Download Model"),
             ),
             LlmReadiness::LocalBackendUnavailable => (
-                "Ghostpad could not initialize its bundled llama.cpp backend for local inference.\n\n\
+                "Wispnote could not initialize its bundled llama.cpp backend for local inference.\n\n\
                 (Development build hint) If you're running from source, make sure the llama.cpp shared libraries and GPU/CPU drivers it depends on are available; otherwise, switch to a remote provider in Preferences."
                     .to_string(),
                 Some("Open Preferences"),
