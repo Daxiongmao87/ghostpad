@@ -11,12 +11,22 @@ env:
 
 jobs:
   build-appimage:
-    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-22.04
+            appimage_arch: x86_64
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+            appimage_arch: aarch64
+            
+    runs-on: ${{ matrix.os }}
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install system dependencies
+    - name: Install system dependencies (Common)
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -28,7 +38,21 @@ jobs:
           cmake \
           pkg-config \
           fuse \
-          libfuse2
+          libfuse2 \
+          build-essential
+
+    - name: Install glslc (x86_64 / Ubuntu 22.04)
+      if: matrix.arch == 'x86_64'
+      run: |
+        wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+        sudo apt-get update
+        sudo apt-get install -y vulkan-sdk
+
+    - name: Install glslc (aarch64 / Ubuntu 24.04)
+      if: matrix.arch == 'aarch64'
+      run: |
+        sudo apt-get install -y glslc
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -40,9 +64,9 @@ jobs:
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-
+          ${{ runner.os }}-${{ matrix.arch }}-cargo-
           
     - name: Build release binary
       run: cargo build --release
@@ -51,7 +75,7 @@ jobs:
       run: |
         mkdir -p AppDir/usr/bin
         mkdir -p AppDir/usr/share/applications
-        mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+        mkdir -p AppDir/usr/share/icons/hicolor/512x512/apps
         mkdir -p AppDir/usr/share/icons/hicolor/128x128/apps
         mkdir -p AppDir/usr/share/icons/hicolor/64x64/apps
         
@@ -63,7 +87,7 @@ jobs:
         cp data/com.ghostpad.Ghostpad.desktop AppDir/
         
         # Copy icon
-        cp data/icons/com.ghostpad.Ghostpad.png AppDir/usr/share/icons/hicolor/256x256/apps/
+        cp data/icons/com.ghostpad.Ghostpad.png AppDir/usr/share/icons/hicolor/512x512/apps/
         cp data/icons/com.ghostpad.Ghostpad.png AppDir/usr/share/icons/hicolor/128x128/apps/
         cp data/icons/com.ghostpad.Ghostpad.png AppDir/usr/share/icons/hicolor/64x64/apps/
         cp data/icons/com.ghostpad.Ghostpad.png AppDir/com.ghostpad.Ghostpad.png
@@ -74,18 +98,18 @@ jobs:
         SELF=$(readlink -f "$0")
         HERE=${SELF%/*}
         export PATH="${HERE}/usr/bin:${PATH}"
-        export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
+        export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/${{ matrix.arch }}-linux-gnu:${LD_LIBRARY_PATH}"
         export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS}"
-        export GDK_PIXBUF_MODULE_FILE="${HERE}/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-        export GI_TYPELIB_PATH="${HERE}/usr/lib/x86_64-linux-gnu/girepository-1.0"
+        export GDK_PIXBUF_MODULE_FILE="${HERE}/usr/lib/${{ matrix.arch }}-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+        export GI_TYPELIB_PATH="${HERE}/usr/lib/${{ matrix.arch }}-linux-gnu/girepository-1.0"
         exec "${HERE}/usr/bin/ghostpad" "$@"
         EOF
         chmod +x AppDir/AppRun
 
     - name: Download linuxdeploy
       run: |
-        wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-        chmod +x linuxdeploy-x86_64.AppImage
+        wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.appimage_arch }}.AppImage
+        chmod +x linuxdeploy-${{ matrix.appimage_arch }}.AppImage
         
     - name: Download linuxdeploy GTK plugin
       run: |
@@ -95,7 +119,7 @@ jobs:
     - name: Build AppImage
       run: |
         export DEPLOY_GTK_VERSION=4
-        ./linuxdeploy-x86_64.AppImage \
+        ./linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
           --appdir AppDir \
           --plugin gtk \
           --desktop-file data/com.ghostpad.Ghostpad.desktop \
@@ -104,19 +128,19 @@ jobs:
           
     - name: Rename AppImage
       run: |
-        mv Ghostpad*.AppImage Ghostpad-x86_64.AppImage
+        mv Ghostpad*.AppImage Ghostpad-${{ matrix.arch }}.AppImage
         
     - name: Upload AppImage artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Ghostpad-AppImage
-        path: Ghostpad-x86_64.AppImage
+        name: Ghostpad-${{ matrix.arch }}-AppImage
+        path: Ghostpad-${{ matrix.arch }}.AppImage
         
     - name: Create Release (on tag)
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: Ghostpad-x86_64.AppImage
+        files: Ghostpad-${{ matrix.arch }}.AppImage
         draft: false
         prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
       env:
