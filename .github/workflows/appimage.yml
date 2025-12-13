@@ -39,32 +39,38 @@ jobs:
           pkg-config \
           build-essential
           
-        # Install AppImage dependencies, Vulkan SDK, and shaderc tools explicitly
-        # We perform this in a separate command to ensure clarity on failure
-        # google-shaderc-tools provides /usr/bin/glslc directly
-        sudo apt-get install -y fuse libfuse2 vulkan-sdk google-shaderc-tools 
+        # Install AppImage dependencies and base Vulkan libraries (for linking)
+        sudo apt-get install -y fuse libfuse2 libvulkan-dev build-essential
         
-        echo "=== DEBUG: Verifying vulkan-sdk content ==="
-        dpkg -L vulkan-sdk || echo "Failed to list vulkan-sdk files"
+        echo "=== SETUP: Manual Vulkan SDK Installation ==="
+        # Download official LunarG SDK tarball to guarantee glslc presence
+        # Version 1.3.275.0 verified from LunarG website
+        SDK_VERSION="1.3.275.0"
+        wget -q "https://sdk.lunarg.com/sdk/download/$SDK_VERSION/linux/vulkansdk-linux-x86_64-$SDK_VERSION.tar.xz" -O vulkansdk.tar.xz
         
-        echo "=== DEBUG: Searching for glslc binary ==="
-        find /usr -name glslc 2>/dev/null || echo "glslc not found in /usr"
+        # Extract to a predictable location
+        mkdir -p $HOME/vulkan-sdk
+        tar -xf vulkansdk.tar.xz -C $HOME/vulkan-sdk
         
-        echo "=== DEBUG: Configuring Environment ==="
-        # Explicitly export for this shell and for GITHUB_ENV
-        export VULKAN_SDK=/usr
-        echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
+        # The tarball extracts a directory named after the version, e.g., 1.3.275.0
+        SDK_ROOT="$HOME/vulkan-sdk/$SDK_VERSION/x86_64"
         
-        # Try to locate glslc and add to path if needed (though /usr/bin is usually in path)
-        GLSLC_PATH=$(find /usr -name glslc -type f -executable | head -n 1)
-        if [ -n "$GLSLC_PATH" ]; then
-          echo "Found glslc at $GLSLC_PATH"
-          GLSLC_DIR=$(dirname "$GLSLC_PATH")
-          echo "$GLSLC_DIR" >> $GITHUB_PATH
-        else
-          echo "CRITICAL: glslc binary NOT FOUND"
-          sudo apt-get install -y google-shaderc-tools || echo "Fallback install failed"
-        fi
+        echo "=== DEBUG: Verifying SDK Extraction ==="
+        ls -F "$SDK_ROOT/bin" || echo "Failed to list SDK bin dir"
+        find "$SDK_ROOT" -name glslc || echo "glslc not found in extracted SDK"
+        
+        echo "=== Configuring Environment ==="
+        # Set VULKAN_SDK environment variable
+        echo "VULKAN_SDK=$SDK_ROOT" >> $GITHUB_ENV
+        export VULKAN_SDK="$SDK_ROOT"
+        
+        # Add SDK bin to PATH for this step and future steps
+        echo "$SDK_ROOT/bin" >> $GITHUB_PATH
+        export PATH="$SDK_ROOT/bin:$PATH"
+        
+        echo "=== DEBUG: Final Verification ==="
+        which glslc || echo "glslc still not in PATH"
+        glslc --version || echo "glslc execution failed"
         
         echo "=== DEBUG: Final Verification ==="
         which glslc || echo "glslc still not in PATH"
