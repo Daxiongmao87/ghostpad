@@ -11,17 +11,7 @@ env:
 
 jobs:
   build-appimage:
-    strategy:
-      matrix:
-        include:
-          - arch: x86_64
-            os: ubuntu-24.04
-            appimage_arch: x86_64
-          - arch: aarch64
-            os: ubuntu-24.04-arm
-            appimage_arch: aarch64
-            
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     
     steps:
     - uses: actions/checkout@v4
@@ -52,9 +42,9 @@ jobs:
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-x86_64-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-${{ matrix.arch }}-cargo-
+          ${{ runner.os }}-x86_64-cargo-
           
     - name: Build release binary
       run: cargo build --release
@@ -86,18 +76,18 @@ jobs:
         SELF=$(readlink -f "$0")
         HERE=${SELF%/*}
         export PATH="${HERE}/usr/bin:${PATH}"
-        export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/${{ matrix.arch }}-linux-gnu:${LD_LIBRARY_PATH}"
+        export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
         export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS}"
-        export GDK_PIXBUF_MODULE_FILE="${HERE}/usr/lib/${{ matrix.arch }}-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
-        export GI_TYPELIB_PATH="${HERE}/usr/lib/${{ matrix.arch }}-linux-gnu/girepository-1.0"
+        export GDK_PIXBUF_MODULE_FILE="${HERE}/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+        export GI_TYPELIB_PATH="${HERE}/usr/lib/x86_64-linux-gnu/girepository-1.0"
         exec "${HERE}/usr/bin/wispnote" "$@"
         EOF
         chmod +x AppDir/AppRun
 
     - name: Download linuxdeploy
       run: |
-        wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.appimage_arch }}.AppImage
-        chmod +x linuxdeploy-${{ matrix.appimage_arch }}.AppImage
+        wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+        chmod +x linuxdeploy-x86_64.AppImage
         
     - name: Download linuxdeploy GTK plugin
       run: |
@@ -107,7 +97,7 @@ jobs:
     - name: Build AppImage
       run: |
         export DEPLOY_GTK_VERSION=4
-        ./linuxdeploy-${{ matrix.appimage_arch }}.AppImage \
+        ./linuxdeploy-x86_64.AppImage \
           --appdir AppDir \
           --plugin gtk \
           --desktop-file data/com.wispnote.Wispnote.desktop \
@@ -116,19 +106,19 @@ jobs:
           
     - name: Rename AppImage
       run: |
-        mv Wispnote*.AppImage Wispnote-${{ matrix.arch }}.AppImage
+        mv Wispnote*.AppImage Wispnote-x86_64.AppImage
         
     - name: Upload AppImage artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Wispnote-${{ matrix.arch }}-AppImage
-        path: Wispnote-${{ matrix.arch }}.AppImage
+        name: Wispnote-x86_64-AppImage
+        path: Wispnote-x86_64.AppImage
         
     - name: Create Release (on tag)
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: Wispnote-${{ matrix.arch }}.AppImage
+        files: Wispnote-x86_64.AppImage
         draft: false
         prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
       env:
