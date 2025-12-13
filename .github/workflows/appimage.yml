@@ -11,7 +11,7 @@ env:
 
 jobs:
   build-appimage:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     
     steps:
     - uses: actions/checkout@v4
@@ -20,7 +20,7 @@ jobs:
       run: |
         # Setup LunarG Vulkan SDK for glslc
         wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
-        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
         
         sudo apt-get update
         sudo apt-get install -y \
