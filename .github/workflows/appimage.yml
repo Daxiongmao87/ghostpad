@@ -18,6 +18,10 @@ jobs:
     
     - name: Install system dependencies
       run: |
+        # Setup LunarG Vulkan SDK for glslc
+        wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+        
         sudo apt-get update
         sudo apt-get install -y \
           libgtk-4-dev \
@@ -30,7 +34,7 @@ jobs:
           fuse \
           libfuse2 \
           build-essential \
-          google-shaderc-tools
+          vulkan-sdk
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
