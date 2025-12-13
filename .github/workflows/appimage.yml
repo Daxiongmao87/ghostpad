@@ -16,9 +16,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install system dependencies
+    - name: Install system dependencies & Configure SDK
       run: |
-        set -x # Debug mode
+        set -e
+        set -x # Debug mode on
         
         # Setup LunarG Vulkan SDK for glslc
         wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
@@ -37,19 +38,35 @@ jobs:
           pkg-config \
           build-essential
           
-        # Install AppImage dependencies and Vulkan SDK explicitly
-        sudo apt-get install -y fuse libfuse2 vulkan-sdk
-
-    - name: Configure Vulkan SDK
-      run: |
-        set -x
-        echo "Configuring Vulkan SDK environment..."
+        # Install AppImage dependencies and Vulkan SDK
+        # We perform this in a separate command to ensure clarity on failure
+        sudo apt-get install -y fuse libfuse2 vulkan-sdk 
+        
+        echo "=== DEBUG: Verifying vulkan-sdk content ==="
+        dpkg -L vulkan-sdk || echo "Failed to list vulkan-sdk files"
+        
+        echo "=== DEBUG: Searching for glslc binary ==="
+        find /usr -name glslc 2>/dev/null || echo "glslc not found in /usr"
+        
+        echo "=== DEBUG: Configuring Environment ==="
+        # Explicitly export for this shell and for GITHUB_ENV
+        export VULKAN_SDK=/usr
         echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
         
-        # Check if glslc exists
-        find /usr -name glslc
-        which glslc || echo "glslc not found in PATH"
-        glslc --version || echo "glslc version check failed"
+        # Try to locate glslc and add to path if needed (though /usr/bin is usually in path)
+        GLSLC_PATH=$(find /usr -name glslc -type f -executable | head -n 1)
+        if [ -n "$GLSLC_PATH" ]; then
+          echo "Found glslc at $GLSLC_PATH"
+          GLSLC_DIR=$(dirname "$GLSLC_PATH")
+          echo "$GLSLC_DIR" >> $GITHUB_PATH
+        else
+          echo "CRITICAL: glslc binary NOT FOUND"
+          sudo apt-get install -y google-shaderc-tools || echo "Fallback install failed"
+        fi
+        
+        echo "=== DEBUG: Final Verification ==="
+        which glslc || echo "glslc still not in PATH"
+        glslc --version || echo "glslc execution failed"
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
