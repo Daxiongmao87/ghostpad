@@ -18,11 +18,15 @@ jobs:
     
     - name: Install system dependencies
       run: |
+        set -x # Debug mode
+        
         # Setup LunarG Vulkan SDK for glslc
         wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
         sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
         
         sudo apt-get update
+        
+        # Install core dev dependencies
         sudo apt-get install -y \
           libgtk-4-dev \
           libadwaita-1-dev \
@@ -31,19 +35,21 @@ jobs:
           libclang-dev \
           cmake \
           pkg-config \
-          fuse \
-          libfuse2 \
-          build-essential \
-          vulkan-sdk
+          build-essential
+          
+        # Install AppImage dependencies and Vulkan SDK explicitly
+        sudo apt-get install -y fuse libfuse2 vulkan-sdk
 
     - name: Configure Vulkan SDK
       run: |
-        # Ensure VULKAN_SDK environment variable is set for CMake
+        set -x
+        echo "Configuring Vulkan SDK environment..."
         echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
         
-        # Verify glslc installation
-        which glslc
-        glslc --version
+        # Check if glslc exists
+        find /usr -name glslc
+        which glslc || echo "glslc not found in PATH"
+        glslc --version || echo "glslc version check failed"
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
