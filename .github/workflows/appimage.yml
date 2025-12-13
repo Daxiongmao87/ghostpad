@@ -38,9 +38,10 @@ jobs:
           pkg-config \
           build-essential
           
-        # Install AppImage dependencies and Vulkan SDK
+        # Install AppImage dependencies, Vulkan SDK, and shaderc tools explicitly
         # We perform this in a separate command to ensure clarity on failure
-        sudo apt-get install -y fuse libfuse2 vulkan-sdk 
+        # google-shaderc-tools provides /usr/bin/glslc directly
+        sudo apt-get install -y fuse libfuse2 vulkan-sdk google-shaderc-tools 
         
         echo "=== DEBUG: Verifying vulkan-sdk content ==="
         dpkg -L vulkan-sdk || echo "Failed to list vulkan-sdk files"
