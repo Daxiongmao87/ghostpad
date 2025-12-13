@@ -148,10 +148,7 @@ jobs:
           --icon-file data/icons/com.wispnote.Wispnote.png \
           --output appimage
           
-    - name: Rename AppImage
-      run: |
-        mv Wispnote*.AppImage Wispnote-x86_64.AppImage
-        
+
     - name: Upload AppImage artifact
       uses: actions/upload-artifact@v4
       with:
